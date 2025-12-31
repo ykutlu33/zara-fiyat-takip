@@ -41,7 +41,7 @@ jobs:
           # ===== AYARLAR =====
           TOKEN = "8375130122:AAHXVaMo-XXZvkd-MEsoOdEVpdtkqc50psg"
           CHAT  = "1234645010"
-          URL   = "https://www.zara.com/tr/tr/hayvan-desenli-kisa-suni-kurk-kaban-zw-collection-p04369240.html?v1=489488534"
+          URL   = "https://www.zara.com/tr/tr/cift-tarafli-cift-yuzlu-ceket-p06318254.html"
           # ===================
 
           def send_telegram(msg):
