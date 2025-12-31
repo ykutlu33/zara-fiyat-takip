@@ -144,6 +144,15 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add price.txt notify.txt
+          
+          # Hata almamak için dosyalar yoksa boş olarak oluştur
+          touch price.txt notify.txt
+          
+          # Spesifik isim yerine tüm degisiklikleri ekle (-A)
+          git add -A
+          
+          # Eğer değişiklik varsa commit yap, yoksa hata verme ve devam et
           git diff --staged --quiet || git commit -m "Update price data"
+          
+          # Hata olsa bile push yapmayı dene
           git push
