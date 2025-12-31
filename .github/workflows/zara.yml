@@ -86,7 +86,7 @@ jobs:
           # BeautifulSoup ile analize basla
           soup = BeautifulSoup(html_content, 'html.parser')
           price = None
-          
+
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     context = browser.new_context(
