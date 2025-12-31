@@ -28,6 +28,9 @@ jobs:
           playwright install-deps
 
       - name: Check price
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT: ${{ secrets.TELEGRAM_CHAT }}
         run: |
           python << 'PYEND'
           import requests
@@ -39,36 +42,28 @@ jobs:
           from playwright.sync_api import sync_playwright
 
           # ===== AYARLAR =====
-          TOKEN = "8375130122:AAHXVaMo-XXZvkd-MEsoOdEVpdtkqc50psg"
-          CHAT  = "1234645010"
+          TOKEN = os.environ.get("TELEGRAM_TOKEN")
+          CHAT  = os.environ.get("TELEGRAM_CHAT")
           URL   = "https://www.zara.com/tr/tr/cift-tarafli-cift-yuzlu-ceket-p06318254.html"
           # ===================
 
           def send_telegram(msg):
-              # HTML formatini kapattik, DUZ METIN gonderiyoruz (Hata riskini sifirlamak icin)
               url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-              payload = {"chat_id": CHAT, "text": msg} # disable_web_page_preview vs kaldirdim
+              payload = {"chat_id": CHAT, "text": msg}
               try:
-                  requests.post(url, json=payload)
+                  r = requests.post(url, json=payload)
+                  print(f"Telegram yaniti: {r.status_code} - {r.text}")
+                  return r.status_code == 200
               except Exception as e:
                   print(f"Mesaj gonderilemedi: {e}")
+                  return False
 
-          # 1. ADIM: HEMEN TEST MESAJI AT
-          print("Baslangic testi...")
-          # Eger bu mesaj geliyorsa bot saglam demektir.
-          # (Bu satiri sadece ilk calistirmada aktif tutuyoruz, sonra silebilirsiniz)
-          # send_telegram("🛠️ Sistem Onarılıyor... Kontrol Başladı.") 
+          # DEBUG: Her calistirmada bilgi ver
+          print(f"Token var mi: {bool(TOKEN)}")
+          print(f"Chat var mi: {bool(CHAT)}")
 
-          # 2. ADIM: ESKI HAFIZAYI ZORLA TEMIZLE
-          if os.path.exists("price.txt"):
-              try:
-                  old_price = float(open("price.txt").read().strip())
-                  # Eger hafizada eski urun fiyati (1990) kalmissa dosyayi sil
-                  if old_price == 1990.0:
-                      print("Eski fiyat (1990) siliniyor...")
-                      os.remove("price.txt")
-              except:
-                  pass
+          # TEST MESAJI (ilk seferde acik birak)
+          send_telegram("🔄 Zara fiyat kontrolu basladi...")
 
           print("Firefox baslatiliyor...")
           price = None
@@ -119,46 +114,42 @@ jobs:
                               continue
 
           except Exception as e:
-              send_telegram(f"HATA: Kod calisirken sorun oldu: {str(e)}")
+              send_telegram(f"❌ HATA: {str(e)[:200]}")
               exit(1)
 
           if not price:
-              send_telegram(f"DIKKAT: Fiyat okunamadi. Linki kontrol et: {URL}")
-              # Dosya hatasi vermesin
-              if not os.path.exists("price.txt"): open("price.txt", "w").write("0")
+              send_telegram(f"⚠️ Fiyat okunamadi!\nLink: {URL}")
               exit(0)
 
           # --- ISLEMLER ---
           formatted = f"{price:,.2f} TL"
           
-          last_price = "0"
-          if os.path.exists("price.txt"): last_price = open("price.txt").read().strip() or "0"
-
-          # Mesaj Hazirligi
-          msg = None
+          last_price = 0
+          if os.path.exists("price.txt"):
+              try:
+                  last_price = float(open("price.txt").read().strip())
+              except:
+                  last_price = 0
 
           print(f"Eski: {last_price}, Yeni: {price}")
 
-          # Eger eski fiyat 0 ise (dosya silindiyse) VEYA 1990 ise (eski urunse) -> ILK BILDIRIMI AT
-          if float(last_price) == 0.0 or float(last_price) == 1990.0:
-              msg = f"TAKIP BASLADI\n\nUrun: {product_name}\nGuncel Fiyat: {formatted}\n\nLink: {URL}"
-          
-          elif float(last_price) != price:
-              msg = f"FIYAT DEGISTI!\n\nEski: {last_price} TL\nYeni: {formatted}\n\nLink: {URL}"
+          if last_price == 0:
+              send_telegram(f"✅ TAKIP BASLADI\n\n📦 {product_name}\n💰 {formatted}\n\n🔗 {URL}")
+          elif last_price != price:
+              if price < last_price:
+                  send_telegram(f"🔥 FIYAT DUSTU!\n\n📦 {product_name}\n❌ Eski: {last_price:,.2f} TL\n✅ Yeni: {formatted}\n\n🔗 {URL}")
+              else:
+                  send_telegram(f"📈 Fiyat artti\n\nEski: {last_price:,.2f} TL\nYeni: {formatted}")
 
-          # Bu seferlik, kontrol amacli her calistiginda mesaj atmasini isterseniz asagidaki if'i kaldirin
-          if msg:
-              send_telegram(msg)
-          
-          # Fiyati kaydet
-          with open("price.txt", "w") as f: f.write(str(price))
+          with open("price.txt", "w") as f:
+              f.write(str(price))
           PYEND
 
       - name: Commit files
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          touch price.txt notify.txt
+          touch price.txt
           git add -A
           git diff --staged --quiet || git commit -m "Update price"
           git push
