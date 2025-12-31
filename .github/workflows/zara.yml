@@ -35,6 +35,7 @@ jobs:
           import time
           import json
           import random
+          from datetime import datetime
           from bs4 import BeautifulSoup
           from playwright.sync_api import sync_playwright
 
@@ -48,41 +49,50 @@ jobs:
               url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
               payload = {"chat_id": CHAT, "text": msg}
               try:
-                  r = requests.post(url, json=payload)
-                  print(f"Telegram: {r.status_code}")
-              except Exception as e:
-                  print(f"Telegram HATA: {e}")
+                  requests.post(url, json=payload)
+              except:
+                  pass
 
-          send_telegram("1/5 - Baslatiliyor...")
+          def get_data():
+              """Kayitli verileri oku"""
+              if os.path.exists("data.json"):
+                  try:
+                      return json.load(open("data.json"))
+                  except:
+                      pass
+              return {"price": 0, "first_price": 0, "last_check": "", "check_count": 0, "last_reminder": ""}
 
-          print("Firefox baslatiliyor...")
+          def save_data(data):
+              """Verileri kaydet"""
+              with open("data.json", "w") as f:
+                  json.dump(data, f)
+
+          def format_price(p):
+              return f"{p:,.2f} TL".replace(",", ".")
+
+          def get_time():
+              return datetime.now().strftime("%d.%m.%Y %H:%M")
+
+          # ===== FIYAT CEKME =====
           price = None
           product_name = "Zara Urunu"
 
           try:
-              send_telegram("2/5 - Firefox aciliyor...")
-              
               with sync_playwright() as p:
                   browser = p.firefox.launch(headless=True)
                   context = browser.new_context(
                       user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0"
                   )
                   page = context.new_page()
-                  
-                  send_telegram("3/5 - Zara sayfasi yukleniyor...")
                   page.goto(URL, timeout=90000, wait_until="domcontentloaded")
                   time.sleep(random.uniform(5, 8))
                   content = page.content()
                   browser.close()
-                  
-                  send_telegram(f"4/5 - Sayfa yuklendi. Boyut: {len(content)} karakter")
 
                   soup = BeautifulSoup(content, 'html.parser')
 
-                  # YONTEM 1: JSON
+                  # JSON metodu
                   scripts = soup.find_all('script', type='application/ld+json')
-                  send_telegram(f"JSON script sayisi: {len(scripts)}")
-                  
                   for script in scripts:
                       try:
                           data = json.loads(script.string)
@@ -93,17 +103,13 @@ jobs:
                               if isinstance(offers, list): offers = offers[0]
                               if offers.get('price'):
                                   price = float(offers['price'])
-                                  send_telegram(f"JSON'dan fiyat bulundu: {price}")
                                   break
-                      except Exception as e:
-                          print(f"JSON parse hatasi: {e}")
+                      except:
                           continue
                   
-                  # YONTEM 2: CSS (Yedek)
+                  # CSS metodu (yedek)
                   if not price:
-                      candidates = soup.select("span.money-amount__main, div.product-detail-info__price-amount span")
-                      send_telegram(f"CSS ile {len(candidates)} element bulundu")
-                      
+                      candidates = soup.select("span.money-amount__main")
                       for tag in candidates:
                           txt = tag.get_text().strip()
                           clean = txt.replace("TL", "").replace("TRY", "").replace(".", "").replace(",", ".").strip()
@@ -111,50 +117,131 @@ jobs:
                               val = float(clean)
                               if val > 100:
                                   price = val
-                                  send_telegram(f"CSS'den fiyat bulundu: {price}")
                                   break
                           except:
                               continue
 
           except Exception as e:
-              send_telegram(f"HATA OLUSTU: {str(e)[:300]}")
+              send_telegram(f"⚠️ HATA\n\nSayfa yuklenemedi:\n{str(e)[:150]}\n\n🔗 {URL}")
               exit(1)
 
           if not price:
-              send_telegram(f"FIYAT BULUNAMADI! Sayfa icerigi kontrol edilmeli.")
+              send_telegram(f"⚠️ UYARI\n\nFiyat bilgisi alinamadi.\nUrun kaldirılmis veya sayfa degismis olabilir.\n\n🔗 {URL}")
               exit(0)
 
-          # --- ISLEMLER ---
-          formatted = f"{price:,.2f} TL"
+          # ===== MANTIK =====
+          db = get_data()
+          now = get_time()
           
-          last_price = 0
-          if os.path.exists("price.txt"):
-              try:
-                  last_price = float(open("price.txt").read().strip())
-              except:
-                  last_price = 0
+          # ILK CALISTIRMA
+          if db["price"] == 0:
+              msg = f"""🛍️ TAKİP BAŞLADI
 
-          send_telegram(f"5/5 - Eski: {last_price}, Yeni: {price}")
+📦 {product_name}
 
-          if last_price == 0:
-              send_telegram(f"TAKIP BASLADI\n\nUrun: {product_name}\nFiyat: {formatted}\n\nLink: {URL}")
-          elif last_price != price:
-              if price < last_price:
-                  send_telegram(f"FIYAT DUSTU!\n\nEski: {last_price:,.2f} TL\nYeni: {formatted}\n\nLink: {URL}")
+💰 Güncel Fiyat: {format_price(price)}
+
+🔗 {URL}
+
+━━━━━━━━━━━━━━━━━━━━
+ℹ️ Fiyat değişirse anında bildirim alacaksınız.
+⏰ Değişiklik olmazsa 6 saatte bir hatırlatma gelecek.
+━━━━━━━━━━━━━━━━━━━━"""
+              
+              send_telegram(msg)
+              db["price"] = price
+              db["first_price"] = price
+              db["last_check"] = now
+              db["last_reminder"] = now
+              db["check_count"] = 1
+              save_data(db)
+              exit(0)
+
+          # FIYAT DEGISTI
+          old_price = db["price"]
+          if old_price != price:
+              diff = old_price - price
+              percent = (diff / old_price) * 100
+              
+              if price < old_price:
+                  # FIYAT DUSTU
+                  msg = f"""🔥 FİYAT DÜŞTÜ!
+
+📦 {product_name}
+
+💸 Eski Fiyat: {format_price(old_price)}
+💰 Yeni Fiyat: {format_price(price)}
+
+📉 Düşüş: {format_price(abs(diff))} (-%{abs(percent):.1f})
+
+🔗 {URL}
+
+━━━━━━━━━━━━━━━━━━━━
+⏰ {now}
+━━━━━━━━━━━━━━━━━━━━"""
               else:
-                  send_telegram(f"FIYAT ARTTI\n\nEski: {last_price:,.2f} TL\nYeni: {formatted}\n\nLink: {URL}")
-          else:
-              send_telegram(f"Fiyat ayni: {formatted}")
+                  # FIYAT ARTTI
+                  msg = f"""📈 FİYAT ARTTI
 
-          with open("price.txt", "w") as f:
-              f.write(str(price))
+📦 {product_name}
+
+💰 Eski Fiyat: {format_price(old_price)}
+💸 Yeni Fiyat: {format_price(price)}
+
+📊 Artış: {format_price(abs(diff))} (+%{abs(percent):.1f})
+
+🔗 {URL}
+
+━━━━━━━━━━━━━━━━━━━━
+⏰ {now}
+━━━━━━━━━━━━━━━━━━━━"""
+              
+              send_telegram(msg)
+              db["price"] = price
+              db["last_check"] = now
+              db["last_reminder"] = now
+              db["check_count"] += 1
+              save_data(db)
+              exit(0)
+
+          # 6 SAAT HATIRLATMA (12 kontrol x 30dk = 6 saat)
+          db["check_count"] += 1
+          if db["check_count"] >= 12:
+              first_p = db.get("first_price", price)
+              total_diff = first_p - price
+              
+              if total_diff != 0:
+                  change_text = f"📊 Takip başlangıcından bu yana: {format_price(abs(total_diff))} {'düşüş' if total_diff > 0 else 'artış'}"
+              else:
+                  change_text = "📊 Takip başlangıcından bu yana fiyat değişmedi"
+              
+              msg = f"""⏰ 6 SAATLİK RAPOR
+
+📦 {product_name}
+
+💰 Güncel Fiyat: {format_price(price)}
+
+{change_text}
+
+🔗 {URL}
+
+━━━━━━━━━━━━━━━━━━━━
+✅ Takip aktif - Fiyat değişirse bildirim alacaksınız
+━━━━━━━━━━━━━━━━━━━━"""
+              
+              send_telegram(msg)
+              db["check_count"] = 0
+              db["last_reminder"] = now
+          
+          db["last_check"] = now
+          save_data(db)
           PYEND
 
       - name: Commit files
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          touch price.txt
+          touch data.json
           git add -A
-          git diff --staged --quiet || git commit -m "Update price"
+          git diff --staged --quiet || git commit -m "Update price data"
           git push
