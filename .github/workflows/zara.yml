@@ -21,79 +21,83 @@ jobs:
       - name: Install dependencies
         run: pip install requests
       
-      - name: Get last price and check
+      - name: Run tracker
+        env:
+          LAST_PRICE: ${{ vars.LAST_PRICE }}
+          LAST_NOTIFY: ${{ vars.LAST_NOTIFY }}
         run: |
-          if [ -f price.txt ]; then
-            export LAST_PRICE=$(cat price.txt)
-          fi
-          if [ -f last_notify.txt ]; then
-            export LAST_NOTIFY=$(cat last_notify.txt)
-          fi
-          
-          python3 -c "
+          cat << 'EOF' > tracker.py
           import requests, re, os, time
 
-          TOKEN = '8375130122:AAHXVaMo-XXZvkd-MEsoOdEVpdtkqc50psg'
-          CHAT = '1234645010'
-          URL = 'https://www.zara.com/tr/tr/hayvan-desenli-kisa-suni-kurk-kaban-zw-collection-p04369240.html?v1=489488534'
+          TOKEN = "8375130122:AAHXVaMo-XXZvkd-MEsoOdEVpdtkqc50psg"
+          CHAT = "1234645010"
+          URL = "https://www.zara.com/tr/tr/hayvan-desenli-kisa-suni-kurk-kaban-zw-collection-p04369240.html?v1=489488534"
 
-          headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+          print("Fiyat kontrol ediliyor...")
+          
+          headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
           response = requests.get(URL, headers=headers, timeout=30)
-          prices = re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*TL', response.text)
+          prices = re.findall(r"(\d{1,3}(?:\.\d{3})*,\d{2})\s*TL", response.text)
+
+          print(f"Bulunan fiyatlar: {prices}")
 
           if prices:
-              float_prices = [float(p.replace('.', '').replace(',', '.')) for p in prices]
+              float_prices = [float(p.replace(".", "").replace(",", ".")) for p in prices]
               price = min(float_prices)
-              formatted = f'{price:,.2f} TL'.replace(',', 'X').replace('.', ',').replace('X', '.')
-              print(f'Fiyat: {formatted}')
+              formatted = f"{price:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
+              print(f"Guncel fiyat: {formatted}")
 
-              last = os.environ.get('LAST_PRICE', '')
-              last_notify = os.environ.get('LAST_NOTIFY', '')
+              last = os.environ.get("LAST_PRICE", "")
+              last_notify = os.environ.get("LAST_NOTIFY", "")
               now = int(time.time())
               
-              # İlk çalışma - hoş geldin mesajı
-              if not last:
-                  msg = f'🛍️ ZARA FİYAT TAKİBİ BAŞLADI!\n\n📦 ZW Collection Hayvan Desenli Kürk Kaban\n💰 Şu anki fiyat: {formatted}\n\n✅ Fiyat değişince bildirim alacaksınız!\n⏰ 6 saatte bir hatırlatma gelecek.\n\n🔗 {URL}'
-                  requests.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': CHAT, 'text': msg})
-                  print('Ilk bildirim gonderildi!')
-                  with open('last_notify.txt', 'w') as f:
-                      f.write(str(now))
+              print(f"Onceki fiyat: {last}")
+              print(f"Son bildirim: {last_notify}")
               
-              # Fiyat değişti
+              msg = None
+              
+              if not last:
+                  msg = f"🛍️ ZARA FİYAT TAKİBİ BAŞLADI!\n\n📦 ZW Collection Hayvan Desenli Kürk Kaban\n💰 Şu anki fiyat: {formatted}\n\n✅ Fiyat değişince bildirim alacaksınız!\n⏰ 6 saatte bir hatırlatma gelecek.\n\n🔗 {URL}"
+                  print("Ilk calisma, bildirim gonderiliyor...")
+              
               elif float(last) != price:
                   old = float(last)
                   diff = price - old
                   pct = (diff / old) * 100
-                  old_fmt = f'{old:,.2f} TL'.replace(',', 'X').replace('.', ',').replace('X', '.')
-                  diff_fmt = f'{abs(diff):,.2f} TL'.replace(',', 'X').replace('.', ',').replace('X', '.')
+                  old_fmt = f"{old:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
+                  diff_fmt = f"{abs(diff):,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
                   if diff < 0:
-                      msg = f'🎉📉 FIYAT DUSTU!\n\n📦 ZW Collection Hayvan Desenli Kürk Kaban\n\n💰 Eski: {old_fmt}\n💰 Yeni: {formatted}\n\n✅ {diff_fmt} UCUZLADI! ({abs(pct):.1f}%)\n\n🔗 {URL}'
+                      msg = f"🎉📉 FIYAT DUSTU!\n\n📦 ZW Collection Hayvan Desenli Kürk Kaban\n\n💰 Eski: {old_fmt}\n💰 Yeni: {formatted}\n\n✅ {diff_fmt} UCUZLADI! ({abs(pct):.1f}%)\n\n🔗 {URL}"
                   else:
-                      msg = f'📈⚠️ FIYAT ARTTI!\n\n📦 ZW Collection Hayvan Desenli Kürk Kaban\n\n💰 Eski: {old_fmt}\n💰 Yeni: {formatted}\n\n⚠️ {diff_fmt} ZAMLANDI! ({abs(pct):.1f}%)\n\n🔗 {URL}'
-                  requests.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': CHAT, 'text': msg})
-                  print('Fiyat degisti, bildirim gonderildi!')
-                  with open('last_notify.txt', 'w') as f:
-                      f.write(str(now))
+                      msg = f"📈⚠️ FIYAT ARTTI!\n\n📦 ZW Collection Hayvan Desenli Kürk Kaban\n\n💰 Eski: {old_fmt}\n💰 Yeni: {formatted}\n\n⚠️ {diff_fmt} ZAMLANDI! ({abs(pct):.1f}%)\n\n🔗 {URL}"
+                  print("Fiyat degisti!")
               
-              # 6 saat geçti, hatırlatma
               elif last_notify and (now - int(last_notify)) >= 21600:
-                  msg = f'⏰ 6 SAATLIK HATIRLATMA\n\n📦 ZW Collection Hayvan Desenli Kürk Kaban\n💰 Fiyat hâlâ: {formatted}\n\n📊 Takip devam ediyor, fiyat değişmedi.\n\n🔗 {URL}'
-                  requests.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': CHAT, 'text': msg})
-                  print('6 saat hatirlatmasi gonderildi!')
-                  with open('last_notify.txt', 'w') as f:
-                      f.write(str(now))
+                  msg = f"⏰ 6 SAATLIK HATIRLATMA\n\n📦 ZW Collection Hayvan Desenli Kürk Kaban\n💰 Fiyat hâlâ: {formatted}\n\n📊 Takip devam ediyor, fiyat değişmedi.\n\n🔗 {URL}"
+                  print("6 saat gecti, hatirlatma!")
               
               else:
-                  print('Fiyat ayni, bildirim yok.')
-
-              with open('price.txt', 'w') as f:
+                  print("Fiyat ayni, bildirim yok.")
+              
+              if msg:
+                  r = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={"chat_id": CHAT, "text": msg})
+                  print(f"Telegram yaniti: {r.status_code} - {r.text}")
+              
+              with open("price.txt", "w") as f:
                   f.write(str(price))
-          "
+              with open("notify.txt", "w") as f:
+                  f.write(str(now))
+              
+              print(f"Kaydedildi: {price}")
+          else:
+              print("Fiyat bulunamadi!")
+          EOF
+          python tracker.py
       
-      - name: Commit price
+      - name: Commit
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add price.txt last_notify.txt || true
-          git diff --staged --quiet || git commit -m "Update price"
+          git add price.txt notify.txt || true
+          git diff --staged --quiet || git commit -m "Update"
           git push || true
