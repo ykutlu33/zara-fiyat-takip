@@ -23,7 +23,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests playwright
+          pip install requests playwright beautifulsoup4
           playwright install chromium
           playwright install-deps
 
@@ -33,106 +33,137 @@ jobs:
           import requests
           import os
           import time
+          import random
+          from bs4 import BeautifulSoup
           from playwright.sync_api import sync_playwright
 
-          # ===== AYARLAR =====
-          TOKEN = "TELEGRAM_BOT_TOKEN"
-          CHAT  = "TELEGRAM_CHAT_ID"
+          # ===== KISISEL AYARLARINIZ EKLENDI =====
+          TOKEN = "8375130122:AAHXVaMo-XXZvkd-MEsoOdEVpdtkqc50psg"
+          CHAT  = "1234645010"
           URL   = "https://www.zara.com/tr/tr/hayvan-desenli-kisa-suni-kurk-kaban-zw-collection-p04369240.html?v1=489488534"
-          # ===================
+          # =======================================
 
           def send_telegram(msg):
               try:
-                  requests.post(
-                      f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                      json={"chat_id": CHAT, "text": msg}
-                  )
+                  url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+                  requests.post(url, json={"chat_id": CHAT, "text": msg})
               except Exception as e:
-                  print("Telegram hata:", e)
+                  print(f"Telegram gonderilemedi: {e}")
 
-          price_holder = {"price": None}
+          print("Playwright baslatiliyor...")
+          
+          price = None
 
-          print("Tarayıcı başlatılıyor")
+          try:
+              with sync_playwright() as p:
+                  # Bot korumasini asmak icin ozel parametreler
+                  browser = p.chromium.launch(
+                      headless=True,
+                      args=[
+                          '--disable-blink-features=AutomationControlled',
+                          '--no-sandbox',
+                          '--disable-setuid-sandbox'
+                      ]
+                  )
+                  
+                  # Gercek bir iPhone gibi davranalim (Mobil gorunum bazen daha basittir)
+                  context = browser.new_context(
+                      user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+                  )
+                  
+                  page = context.new_page()
+                  
+                  # Siteye git
+                  print("Site yukleniyor...")
+                  page.goto(URL, timeout=90000)
+                  
+                  # Yuklenmesi icin rastgele bekle (Insan taklidi)
+                  time.sleep(random.uniform(5, 8))
+                  
+                  # HTML icerigini al
+                  content = page.content()
+                  browser.close()
+                  
+                  # BeautifulSoup ile analiz et
+                  soup = BeautifulSoup(content, 'html.parser')
+                  
+                  # YONTEM 1: Meta verisi (En temiz veri)
+                  meta = soup.find("meta", property="product:price:amount")
+                  if meta:
+                      try:
+                          price = float(meta["content"])
+                          print(f"Meta etiketinden fiyat bulundu: {price}")
+                      except:
+                          pass
+                  
+                  # YONTEM 2: Görünür fiyat etiketleri (Zara guncel classlari)
+                  if not price:
+                      classes = ["price-current__amount", "money-amount__main", "price__amount"]
+                      for cls in classes:
+                          tag = soup.find(class_=cls)
+                          if tag:
+                              txt = tag.get_text().strip()
+                              clean = txt.replace("TL", "").replace("TRY", "").replace(".", "").replace(",", ".").strip()
+                              try:
+                                  price = float(clean)
+                                  print(f"HTML class ({cls}) ile bulundu: {price}")
+                                  break
+                              except:
+                                  continue
 
-          with sync_playwright() as p:
-              browser = p.chromium.launch(headless=True)
-              context = browser.new_context(
-                  locale="tr-TR",
-                  timezone_id="Europe/Istanbul",
-                  user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-              )
-              page = context.new_page()
+          except Exception as e:
+              print(f"HATA: {e}")
+              # Kritik hata olursa bildirim at
+              send_telegram(f"⚠️ HATA: Kod çalışırken sorun oluştu.\n{str(e)}")
+              exit(1)
 
-              def handle_response(response):
-                  try:
-                      if "product" in response.url and response.request.method == "GET":
-                          data = response.json()
-                          if isinstance(data, dict) and "price" in data and "value" in data["price"]:
-                              price_holder["price"] = data["price"]["value"] / 100
-                  except:
-                      pass
-
-              page.on("response", handle_response)
-
-              page.goto(URL, timeout=60000)
-              page.wait_for_timeout(8000)
-              browser.close()
-
-          price = price_holder["price"]
-
+          # Fiyat hala yoksa
           if not price:
-              send_telegram(
-                  "⚠️ Fiyat çekilemedi\n\n"
-                  "Zara API yapısı değişmiş veya bot koruması engellemiş olabilir\n\n"
-                  f"{URL}"
-              )
+              print("Fiyat bulunamadi.")
+              # Dosya yoksa olustur
+              if not os.path.exists("price.txt"):
+                  with open("price.txt", "w") as f: f.write("0")
+              
+              send_telegram(f"⚠️ DİKKAT: Ürün sayfasına girildi ama fiyat okunamadı.\n\nZara erişimi engellemiş olabilir.\n\n🔗 {URL}")
               exit(0)
 
+          # Fiyat formatlama
           formatted = f"{price:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
+          print(f"Guncel Fiyat: {formatted}")
 
+          # Kayitli verileri oku
           last_price = "0"
           last_notify = ""
 
           if os.path.exists("price.txt"):
-              last_price = open("price.txt").read().strip() or "0"
-
+              with open("price.txt", "r") as f: last_price = f.read().strip() or "0"
+          
           if os.path.exists("notify.txt"):
-              last_notify = open("notify.txt").read().strip()
+              with open("notify.txt", "r") as f: last_notify = f.read().strip()
 
           now = int(time.time())
           msg = None
 
+          # Mantik Kontrolu
           if last_price == "0":
-              msg = (
-                  "🛍️ TAKİP BAŞLADI\n\n"
-                  f"💰 Fiyat: {formatted}\n\n"
-                  f"{URL}"
-              )
-
+              msg = f"🛍️ TAKİP BAŞLADI\n\n💰 Fiyat: {formatted}\n\n🔗 {URL}"
+          
           elif float(last_price) != price:
               old = float(last_price)
               diff = price - old
-              trend = "📉" if diff < 0 else "📈"
-              msg = (
-                  f"{trend} FİYAT DEĞİŞTİ\n\n"
-                  f"Eski: {old:.2f} TL\n"
-                  f"Yeni: {formatted}\n"
-                  f"Fark: {diff:.2f} TL\n\n"
-                  f"{URL}"
-              )
-
-          elif last_notify.isdigit() and now - int(last_notify) >= 21600:
-              msg = (
-                  "⏰ HATIRLATMA\n\n"
-                  f"💰 Fiyat hala: {formatted}\n\n"
-                  f"{URL}"
-              )
+              emoji = "📉" if diff < 0 else "📈"
+              msg = f"{emoji} FİYAT DEĞİŞTİ!\n\nEski: {old:,.2f} TL\nYeni: {formatted}\nFark: {diff:,.2f} TL\n\n🔗 {URL}"
+          
+          elif last_notify and (now - int(last_notify) if last_notify.isdigit() else 999999) >= 21600:
+              msg = f"⏰ HATIRLATMA\n\nFiyat hala: {formatted}\n\n🔗 {URL}"
+          else:
+              print("Fiyat ayni, bildirim zamani gelmedi.")
 
           if msg:
               send_telegram(msg)
-              open("notify.txt", "w").write(str(now))
+              with open("notify.txt", "w") as f: f.write(str(now))
 
-          open("price.txt", "w").write(str(price))
+          with open("price.txt", "w") as f: f.write(str(price))
           PYEND
 
       - name: Commit files
