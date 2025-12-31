@@ -2,7 +2,7 @@ name: Zara Fiyat Takip
 
 on:
   schedule:
-    - cron: '*/20 * * * *' # Zara icin 20dk bir ideal
+    - cron: '*/20 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -11,196 +11,129 @@ permissions:
 jobs:
   check-price:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
-      # 1. ADIM: Playwright ve tarayiciyi yukluyoruz
+
       - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4 playwright
+          pip install requests playwright
           playwright install chromium
           playwright install-deps
-      
+
       - name: Check price
         run: |
           python << 'PYEND'
           import requests
           import os
           import time
-          import random
-          from bs4 import BeautifulSoup
           from playwright.sync_api import sync_playwright
 
-          # --- AYARLAR ---
-          TOKEN = "8375130122:AAHXVaMo-XXZvkd-MEsoOdEVpdtkqc50psg"
-          CHAT = "1234645010"
-          URL = "https://www.zara.com/tr/tr/hayvan-desenli-kisa-suni-kurk-kaban-zw-collection-p04369240.html?v1=489488534"
-          # ---------------
+          # ===== AYARLAR =====
+          TOKEN = "TELEGRAM_BOT_TOKEN"
+          CHAT  = "TELEGRAM_CHAT_ID"
+          URL   = "https://www.zara.com/tr/tr/hayvan-desenli-kisa-suni-kurk-kaban-zw-collection-p04369240.html?v1=489488534"
+          # ===================
 
-          def send_telegram(message):
+          def send_telegram(msg):
               try:
-                  url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-                  requests.post(url, json={"chat_id": CHAT, "text": message})
-              except Exception as e:
-                  print(f"Telegram hatasi: {e}")
-
-          print("Playwright tarayicisi baslatiliyor...")
-          
-          html_content = ""
-          
-          try:
-              with sync_playwright() as p:
-                  # Tarayiciyi baslat (headless=True arka planda calisir)
-                  browser = p.chromium.launch(headless=True)
-                  
-                  # Gercek bir kullanici gibi gorunmek icin User Agent ayari
-                  context = browser.new_context(
-                      user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+                  requests.post(
+                      f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                      json={"chat_id": CHAT, "text": msg}
                   )
-                  page = context.new_page()
-                  
-                  # Siteye git
-                  print("Siteye gidiliyor...")
-                  page.goto(URL, timeout=60000)
-                  
-                  # Zara'nin JavaScript'i yuklemesi icin biraz bekle
-                  time.sleep(5) 
-                  
-                  # Sayfa icerigini al
-                  html_content = page.content()
-                  browser.close()
-                  print("HTML icerigi alindi.")
-                  
-          except Exception as e:
-              print(f"Tarayici hatasi: {e}")
-              send_telegram(f"⚠️ Hata: Tarayici siteyi acamadi.\n{str(e)}")
-              exit(1)
+              except Exception as e:
+                  print("Telegram hata:", e)
 
-          # BeautifulSoup ile analize basla
-          soup = BeautifulSoup(html_content, 'html.parser')
           price = None
 
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    context = browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-    )
-    page = context.new_page()
+          print("Tarayıcı başlatılıyor")
 
-    def handle_response(response):
-        nonlocal price
-        try:
-            if "product" in response.url and response.request.method == "GET":
-                data = response.json()
-                # Zara fiyat genelde burada
-                price = data["price"]["value"] / 100
-        except:
-            pass
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True)
+              context = browser.new_context(
+                  locale="tr-TR",
+                  timezone_id="Europe/Istanbul",
+                  user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+              )
+              page = context.new_page()
 
-    page.on("response", handle_response)
-
-    page.goto(URL, timeout=60000)
-    page.wait_for_timeout(8000)
-    browser.close()
-
-          # YONTEM 1: Meta etiketleri
-          meta_price = soup.find("meta", property="product:price:amount")
-          if not meta_price:
-              meta_price = soup.find("meta", property="og:price:amount")
-          
-          if meta_price:
-              try:
-                  price = float(meta_price["content"])
-                  print(f"Meta'dan fiyat bulundu: {price}")
-              except:
-                  pass
-
-          # YONTEM 2: Span Class taramasi (Zara guncel class isimleri)
-          if not price:
-              # Zara'da genellikle kullanilan fiyat class'lari
-              classes_to_check = ["price-current__amount", "money-amount__main", "price__amount"]
-              
-              for cls in classes_to_check:
-                  element = soup.find(class_=cls)
-                  if element:
-                      text = element.get_text().strip()
-                      clean = text.replace("TL", "").replace(".", "").replace(",", ".").strip()
-                      try:
-                          val = float(clean)
-                          price = val
-                          print(f"Class '{cls}' icinden fiyat bulundu: {val}")
-                          break
-                      except:
-                          continue
-
-          # YONTEM 3: Sayfadaki tum metinlerde "TL" ve sayi ara (Son care)
-          if not price:
-              print("Son care: Regex taramasi yapiliyor...")
-              import re
-              # Ornek: 3.990,00 TL formatini yakalar
-              matches = re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*TL', soup.get_text())
-              if matches:
-                  # En dusuk fiyati al (bazen taksit tutarini yakalayabilir, dikkat)
+              def handle_response(response):
+                  nonlocal price
                   try:
-                      prices = [float(m.replace(".", "").replace(",", ".")) for m in matches]
-                      price = max(prices) # Genelde urun fiyati en yuksek olandir (taksitten buyuktur)
-                      print(f"Regex ile bulundu: {price}")
+                      if "product" in response.url and response.request.method == "GET":
+                          data = response.json()
+                          if "price" in data and "value" in data["price"]:
+                              price = data["price"]["value"] / 100
                   except:
                       pass
 
+              page.on("response", handle_response)
+
+              page.goto(URL, timeout=60000)
+              page.wait_for_timeout(8000)
+              browser.close()
+
           if not price:
-              print("Fiyat bulunamadi! HTML yapisi:")
-              # HTML'in basini yazdiralim ki loglardan bakalim ne donmus
-              print(str(soup)[:500])
-              
-              if not os.path.exists("price.txt"):
-                  with open("price.txt", "w") as f: f.write("0")
-              
-              send_telegram(f"⚠️ Fiyat hala çekilemiyor. Zara HTML yapısını değiştirmiş olabilir veya bot koruması çok yüksek.\n\n🔗 {URL}")
+              send_telegram(
+                  "⚠️ Fiyat çekilemedi\n\n"
+                  "Zara bot koruması veya API yapısı değişmiş olabilir\n\n"
+                  f"{URL}"
+              )
               exit(0)
 
-          # --- Buradan sonrasi ayni ---
           formatted = f"{price:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
-          
-          last = "0"
+
+          last_price = "0"
           last_notify = ""
-          
+
           if os.path.exists("price.txt"):
-              with open("price.txt", "r") as f: last = f.read().strip() or "0"
+              last_price = open("price.txt").read().strip() or "0"
+
           if os.path.exists("notify.txt"):
-              with open("notify.txt", "r") as f: last_notify = f.read().strip()
+              last_notify = open("notify.txt").read().strip()
 
           now = int(time.time())
           msg = None
 
-          print(f"Eski: {last}, Yeni: {price}")
+          if last_price == "0":
+              msg = (
+                  "🛍️ TAKİP BAŞLADI\n\n"
+                  f"💰 Fiyat: {formatted}\n\n"
+                  f"{URL}"
+              )
 
-          if last == "0":
-              msg = f"🛍️ TAKİP BAŞLADI (Tarayıcı Modu)\n\n📦 Ürün Takipte\n💰 Fiyat: {formatted}\n\n🔗 {URL}"
-          
-          elif float(last) != price:
-              old = float(last)
+          elif float(last_price) != price:
+              old = float(last_price)
               diff = price - old
-              emoji = "📉" if diff < 0 else "📈"
-              msg = f"{emoji} FİYAT DEĞİŞTİ!\n\nEski: {old}\nYeni: {formatted}\nFark: {diff:.2f} TL\n\n🔗 {URL}"
+              trend = "📉" if diff < 0 else "📈"
+              msg = (
+                  f"{trend} FİYAT DEĞİŞTİ\n\n"
+                  f"Eski: {old:.2f} TL\n"
+                  f"Yeni: {formatted}\n"
+                  f"Fark: {diff:.2f} TL\n\n"
+                  f"{URL}"
+              )
 
-          elif last_notify and (now - int(last_notify) if last_notify.isdigit() else 999999) >= 21600:
-              msg = f"⏰ HATIRLATMA\n\n💰 Fiyat hala: {formatted}\n\n🔗 {URL}"
+          elif last_notify.isdigit() and now - int(last_notify) >= 21600:
+              msg = (
+                  "⏰ HATIRLATMA\n\n"
+                  f"💰 Fiyat hala: {formatted}\n\n"
+                  f"{URL}"
+              )
 
           if msg:
               send_telegram(msg)
-              with open("notify.txt", "w") as f: f.write(str(now))
+              open("notify.txt", "w").write(str(now))
 
-          with open("price.txt", "w") as f: f.write(str(price))
+          open("price.txt", "w").write(str(price))
           PYEND
-      
+
       - name: Commit files
         run: |
           git config user.name "github-actions"
