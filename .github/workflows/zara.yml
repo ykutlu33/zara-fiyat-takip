@@ -2,7 +2,7 @@ name: Zara Fiyat Takip
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/20 * * * *' # Zara icin 20dk bir ideal
   workflow_dispatch:
 
 permissions:
@@ -21,8 +21,12 @@ jobs:
         with:
           python-version: '3.11'
       
+      # 1. ADIM: Playwright ve tarayiciyi yukluyoruz
       - name: Install dependencies
-        run: pip install requests beautifulsoup4
+        run: |
+          pip install requests beautifulsoup4 playwright
+          playwright install chromium
+          playwright install-deps
       
       - name: Check price
         run: |
@@ -30,7 +34,9 @@ jobs:
           import requests
           import os
           import time
+          import random
           from bs4 import BeautifulSoup
+          from playwright.sync_api import sync_playwright
 
           # --- AYARLAR ---
           TOKEN = "8375130122:AAHXVaMo-XXZvkd-MEsoOdEVpdtkqc50psg"
@@ -45,29 +51,43 @@ jobs:
               except Exception as e:
                   print(f"Telegram hatasi: {e}")
 
-          print("Siteye baglaniliyor...")
+          print("Playwright tarayicisi baslatiliyor...")
           
-          # Zara gibi siteler icin gelismis basliklar
-          headers = {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-              "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-              "Referer": "https://www.google.com/"
-          }
-
-          response = None
+          html_content = ""
+          
           try:
-              session = requests.Session()
-              response = session.get(URL, headers=headers, timeout=30)
+              with sync_playwright() as p:
+                  # Tarayiciyi baslat (headless=True arka planda calisir)
+                  browser = p.chromium.launch(headless=True)
+                  
+                  # Gercek bir kullanici gibi gorunmek icin User Agent ayari
+                  context = browser.new_context(
+                      user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+                  )
+                  page = context.new_page()
+                  
+                  # Siteye git
+                  print("Siteye gidiliyor...")
+                  page.goto(URL, timeout=60000)
+                  
+                  # Zara'nin JavaScript'i yuklemesi icin biraz bekle
+                  time.sleep(5) 
+                  
+                  # Sayfa icerigini al
+                  html_content = page.content()
+                  browser.close()
+                  print("HTML icerigi alindi.")
+                  
           except Exception as e:
-              print(f"Baglanti hatasi: {e}")
-              send_telegram(f"⚠️ HATA: Zara sitesine baglanilamadi.\n\nHata: {str(e)}")
+              print(f"Tarayici hatasi: {e}")
+              send_telegram(f"⚠️ Hata: Tarayici siteyi acamadi.\n{str(e)}")
               exit(1)
 
-          soup = BeautifulSoup(response.content, 'html.parser')
+          # BeautifulSoup ile analize basla
+          soup = BeautifulSoup(html_content, 'html.parser')
           price = None
 
-          # 1. Yontem: Meta etiketleri (En saglami)
+          # YONTEM 1: Meta etiketleri
           meta_price = soup.find("meta", property="product:price:amount")
           if not meta_price:
               meta_price = soup.find("meta", property="og:price:amount")
@@ -75,74 +95,86 @@ jobs:
           if meta_price:
               try:
                   price = float(meta_price["content"])
+                  print(f"Meta'dan fiyat bulundu: {price}")
               except:
                   pass
 
-          # 2. Yontem: HTML icinde arama (Yedek)
+          # YONTEM 2: Span Class taramasi (Zara guncel class isimleri)
           if not price:
-              # 'price' iceren span elementlerini tara
-              candidates = soup.find_all("span", class_=lambda x: x and "price" in x)
-              for tag in candidates:
-                  text = tag.get_text().strip()
-                  # Basit regex mantigi: "3.590,00 TL" formatini yakala
-                  if "TL" in text:
+              # Zara'da genellikle kullanilan fiyat class'lari
+              classes_to_check = ["price-current__amount", "money-amount__main", "price__amount"]
+              
+              for cls in classes_to_check:
+                  element = soup.find(class_=cls)
+                  if element:
+                      text = element.get_text().strip()
                       clean = text.replace("TL", "").replace(".", "").replace(",", ".").strip()
                       try:
                           val = float(clean)
-                          if val > 100: # Mantikli bir fiyat mi?
-                              price = val
-                              break
+                          price = val
+                          print(f"Class '{cls}' icinden fiyat bulundu: {val}")
+                          break
                       except:
                           continue
 
-          # Eger fiyat hala bulunamadiysa
+          # YONTEM 3: Sayfadaki tum metinlerde "TL" ve sayi ara (Son care)
           if not price:
-              print("Fiyat bulunamadi!")
-              # Onceki hatayi onlemek icin bos bir price.txt olusturalim
+              print("Son care: Regex taramasi yapiliyor...")
+              import re
+              # Ornek: 3.990,00 TL formatini yakalar
+              matches = re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*TL', soup.get_text())
+              if matches:
+                  # En dusuk fiyati al (bazen taksit tutarini yakalayabilir, dikkat)
+                  try:
+                      prices = [float(m.replace(".", "").replace(",", ".")) for m in matches]
+                      price = max(prices) # Genelde urun fiyati en yuksek olandir (taksitten buyuktur)
+                      print(f"Regex ile bulundu: {price}")
+                  except:
+                      pass
+
+          if not price:
+              print("Fiyat bulunamadi! HTML yapisi:")
+              # HTML'in basini yazdiralim ki loglardan bakalim ne donmus
+              print(str(soup)[:500])
+              
               if not os.path.exists("price.txt"):
                   with open("price.txt", "w") as f: f.write("0")
               
-              # Size bildirim gonderiyoruz ki sorunu anlayin
-              send_telegram(f"⚠️ DIKKAT: Fiyat sayfadan çekilemedi.\n\nSebep: Zara botu engellemis olabilir veya HTML yapisi degismis.\n\n🔗 {URL}")
-              exit(0) # Kod burada biter
+              send_telegram(f"⚠️ Fiyat hala çekilemiyor. Zara HTML yapısını değiştirmiş olabilir veya bot koruması çok yüksek.\n\n🔗 {URL}")
+              exit(0)
 
-          # Fiyat bulunduysa isleme devam et
+          # --- Buradan sonrasi ayni ---
           formatted = f"{price:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
-          print(f"Guncel Fiyat: {formatted}")
-
-          last = ""
+          
+          last = "0"
           last_notify = ""
           
-          # Dosyalar yoksa hata vermemesi icin olustur
-          if not os.path.exists("price.txt"):
-              with open("price.txt", "w") as f: f.write(str(price))
-          if not os.path.exists("notify.txt"):
-              with open("notify.txt", "w") as f: f.write("")
-
-          with open("price.txt", "r") as f: last = f.read().strip()
-          with open("notify.txt", "r") as f: last_notify = f.read().strip()
+          if os.path.exists("price.txt"):
+              with open("price.txt", "r") as f: last = f.read().strip() or "0"
+          if os.path.exists("notify.txt"):
+              with open("notify.txt", "r") as f: last_notify = f.read().strip()
 
           now = int(time.time())
           msg = None
 
-          # Ilk calistirma veya fiyat degisimi
-          if not last or last == "0":
-              msg = f"🛍️ ZARA TAKİP AKTİF!\n\n💰 Fiyat: {formatted}\n\n🔗 {URL}"
+          print(f"Eski: {last}, Yeni: {price}")
+
+          if last == "0":
+              msg = f"🛍️ TAKİP BAŞLADI (Tarayıcı Modu)\n\n📦 Ürün Takipte\n💰 Fiyat: {formatted}\n\n🔗 {URL}"
           
           elif float(last) != price:
               old = float(last)
               diff = price - old
-              msg = f"🚨 FİYAT DEĞİŞTİ!\n\nEski: {old}\nYeni: {formatted}\nFark: {diff}\n\n🔗 {URL}"
+              emoji = "📉" if diff < 0 else "📈"
+              msg = f"{emoji} FİYAT DEĞİŞTİ!\n\nEski: {old}\nYeni: {formatted}\nFark: {diff:.2f} TL\n\n🔗 {URL}"
 
-          # Hatirlatma (6 saatte bir)
           elif last_notify and (now - int(last_notify) if last_notify.isdigit() else 999999) >= 21600:
-              msg = f"⏰ HATIRLATMA\n\nFiyat hala: {formatted}\n\n🔗 {URL}"
+              msg = f"⏰ HATIRLATMA\n\n💰 Fiyat hala: {formatted}\n\n🔗 {URL}"
 
           if msg:
               send_telegram(msg)
               with open("notify.txt", "w") as f: f.write(str(now))
 
-          # Fiyati kaydet
           with open("price.txt", "w") as f: f.write(str(price))
           PYEND
       
@@ -150,7 +182,6 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          # Dosyalar yoksa olustur ki hata vermesin
           touch price.txt notify.txt
           git add -A
           git diff --staged --quiet || git commit -m "Update price"
