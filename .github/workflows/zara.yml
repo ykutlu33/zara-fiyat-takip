@@ -21,50 +21,46 @@ jobs:
       - name: Install dependencies
         run: pip install requests
       
-      - name: Get last price
+      - name: Get last price and check
         run: |
           if [ -f price.txt ]; then
-            echo "LAST_PRICE=$(cat price.txt)" >> $GITHUB_ENV
+            export LAST_PRICE=$(cat price.txt)
           fi
-      
-      - name: Run tracker
-        env:
-          LAST_PRICE: ${{ env.LAST_PRICE }}
-        run: |
-          python << 'SCRIPT'
+          
+          python3 -c "
           import requests, re, os
 
-          TOKEN = "8375130122:AAHXVaMo-XXZvkd-MEsoOdEVpdtkqc50psg"
-          CHAT = "1234645010"
-          URL = "https://www.zara.com/tr/tr/hayvan-desenli-kisa-suni-kurk-kaban-zw-collection-p04369240.html?v1=489488534"
+          TOKEN = '8375130122:AAHXVaMo-XXZvkd-MEsoOdEVpdtkqc50psg'
+          CHAT = '1234645010'
+          URL = 'https://www.zara.com/tr/tr/hayvan-desenli-kisa-suni-kurk-kaban-zw-collection-p04369240.html?v1=489488534'
 
-          headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+          headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
           response = requests.get(URL, headers=headers, timeout=30)
-          prices = re.findall(r"(\d{1,3}(?:\.\d{3})*,\d{2})\s*TL", response.text)
+          prices = re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*TL', response.text)
 
           if prices:
-              float_prices = [float(p.replace(".", "").replace(",", ".")) for p in prices]
+              float_prices = [float(p.replace('.', '').replace(',', '.')) for p in prices]
               price = min(float_prices)
-              formatted = f"{price:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
-              print(f"Fiyat: {formatted}")
+              formatted = f'{price:,.2f} TL'.replace(',', 'X').replace('.', ',').replace('X', '.')
+              print(f'Fiyat: {formatted}')
 
-              last = os.environ.get("LAST_PRICE", "")
+              last = os.environ.get('LAST_PRICE', '')
               if last and float(last) != price:
                   old = float(last)
                   diff = price - old
                   pct = (diff / old) * 100
-                  old_fmt = f"{old:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
-                  diff_fmt = f"{abs(diff):,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
+                  old_fmt = f'{old:,.2f} TL'.replace(',', 'X').replace('.', ',').replace('X', '.')
+                  diff_fmt = f'{abs(diff):,.2f} TL'.replace(',', 'X').replace('.', ',').replace('X', '.')
                   if diff < 0:
-                      msg = f"🎉📉 FIYAT DUSTU!\n\nEski: {old_fmt}\nYeni: {formatted}\n\nFark: {diff_fmt} ({abs(pct):.1f}%)\n\n{URL}"
+                      msg = f'🎉📉 FIYAT DUSTU!\n\nEski: {old_fmt}\nYeni: {formatted}\n\nFark: {diff_fmt} ({abs(pct):.1f}%)\n\n{URL}'
                   else:
-                      msg = f"📈 FIYAT ARTTI!\n\nEski: {old_fmt}\nYeni: {formatted}\n\nFark: {diff_fmt} ({abs(pct):.1f}%)\n\n{URL}"
-                  requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={"chat_id": CHAT, "text": msg})
-                  print("Telegram gonderildi!")
+                      msg = f'📈 FIYAT ARTTI!\n\nEski: {old_fmt}\nYeni: {formatted}\n\nFark: {diff_fmt} ({abs(pct):.1f}%)\n\n{URL}'
+                  requests.post(f'https://api.telegram.org/bot{TOKEN}/sendMessage', json={'chat_id': CHAT, 'text': msg})
+                  print('Telegram gonderildi!')
 
-              with open("price.txt", "w") as f:
+              with open('price.txt', 'w') as f:
                   f.write(str(price))
-          SCRIPT
+          "
       
       - name: Commit price
         run: |
