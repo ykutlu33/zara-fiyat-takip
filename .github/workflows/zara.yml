@@ -28,9 +28,6 @@ jobs:
           playwright install-deps
 
       - name: Check price
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT: ${{ secrets.TELEGRAM_CHAT }}
         run: |
           python << 'PYEND'
           import requests
@@ -42,8 +39,8 @@ jobs:
           from playwright.sync_api import sync_playwright
 
           # ===== AYARLAR =====
-          TOKEN = os.environ.get("TELEGRAM_TOKEN")
-          CHAT  = os.environ.get("TELEGRAM_CHAT")
+          TOKEN = "8375130122:AAHXVaMo-XXZvkd-MEsoOdEVpdtkqc50psg"
+          CHAT  = "1234645010"
           URL   = "https://www.zara.com/tr/tr/cift-tarafli-cift-yuzlu-ceket-p06318254.html"
           # ===================
 
@@ -52,17 +49,11 @@ jobs:
               payload = {"chat_id": CHAT, "text": msg}
               try:
                   r = requests.post(url, json=payload)
-                  print(f"Telegram yaniti: {r.status_code} - {r.text}")
-                  return r.status_code == 200
+                  print(f"Telegram yaniti: {r.status_code}")
               except Exception as e:
                   print(f"Mesaj gonderilemedi: {e}")
-                  return False
 
-          # DEBUG: Her calistirmada bilgi ver
-          print(f"Token var mi: {bool(TOKEN)}")
-          print(f"Chat var mi: {bool(CHAT)}")
-
-          # TEST MESAJI (ilk seferde acik birak)
+          # TEST MESAJI - ilk calistirmada kontrol icin
           send_telegram("🔄 Zara fiyat kontrolu basladi...")
 
           print("Firefox baslatiliyor...")
@@ -114,11 +105,11 @@ jobs:
                               continue
 
           except Exception as e:
-              send_telegram(f"❌ HATA: {str(e)[:200]}")
+              send_telegram(f"HATA: {str(e)[:200]}")
               exit(1)
 
           if not price:
-              send_telegram(f"⚠️ Fiyat okunamadi!\nLink: {URL}")
+              send_telegram(f"DIKKAT: Fiyat okunamadi. Link: {URL}")
               exit(0)
 
           # --- ISLEMLER ---
@@ -134,12 +125,12 @@ jobs:
           print(f"Eski: {last_price}, Yeni: {price}")
 
           if last_price == 0:
-              send_telegram(f"✅ TAKIP BASLADI\n\n📦 {product_name}\n💰 {formatted}\n\n🔗 {URL}")
+              send_telegram(f"TAKIP BASLADI\n\nUrun: {product_name}\nFiyat: {formatted}\n\nLink: {URL}")
           elif last_price != price:
               if price < last_price:
-                  send_telegram(f"🔥 FIYAT DUSTU!\n\n📦 {product_name}\n❌ Eski: {last_price:,.2f} TL\n✅ Yeni: {formatted}\n\n🔗 {URL}")
+                  send_telegram(f"FIYAT DUSTU!\n\nEski: {last_price:,.2f} TL\nYeni: {formatted}\n\nLink: {URL}")
               else:
-                  send_telegram(f"📈 Fiyat artti\n\nEski: {last_price:,.2f} TL\nYeni: {formatted}")
+                  send_telegram(f"FIYAT ARTTI\n\nEski: {last_price:,.2f} TL\nYeni: {formatted}\n\nLink: {URL}")
 
           with open("price.txt", "w") as f:
               f.write(str(price))
