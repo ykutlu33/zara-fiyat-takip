@@ -45,21 +45,27 @@ jobs:
           # ===================
 
           def send_telegram(msg):
-              # HTML formatini kapattik, duz metin gonderiyoruz (Hata riskini sifirlamak icin)
+              # HTML formatini kapattik, DUZ METIN gonderiyoruz (Hata riskini sifirlamak icin)
               url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-              payload = {"chat_id": CHAT, "text": msg, "disable_web_page_preview": False}
+              payload = {"chat_id": CHAT, "text": msg} # disable_web_page_preview vs kaldirdim
               try:
                   requests.post(url, json=payload)
-              except:
-                  pass
+              except Exception as e:
+                  print(f"Mesaj gonderilemedi: {e}")
 
-          # --- HAFIZA TEMIZLIGI ---
-          # Bu kod calistiginda eski 1990 kaydini siler, boylece bot "Yeni basliyorum" sanar.
+          # 1. ADIM: HEMEN TEST MESAJI AT
+          print("Baslangic testi...")
+          # Eger bu mesaj geliyorsa bot saglam demektir.
+          # (Bu satiri sadece ilk calistirmada aktif tutuyoruz, sonra silebilirsiniz)
+          # send_telegram("🛠️ Sistem Onarılıyor... Kontrol Başladı.") 
+
+          # 2. ADIM: ESKI HAFIZAYI ZORLA TEMIZLE
           if os.path.exists("price.txt"):
               try:
-                  content = open("price.txt").read().strip()
-                  # Eger iceride 1990 yaziyorsa o dosyayi sil
-                  if "1990" in content:
+                  old_price = float(open("price.txt").read().strip())
+                  # Eger hafizada eski urun fiyati (1990) kalmissa dosyayi sil
+                  if old_price == 1990.0:
+                      print("Eski fiyat (1990) siliniyor...")
                       os.remove("price.txt")
               except:
                   pass
@@ -82,7 +88,7 @@ jobs:
 
                   soup = BeautifulSoup(content, 'html.parser')
 
-                  # JSON Verisi
+                  # YONTEM 1: JSON
                   scripts = soup.find_all('script', type='application/ld+json')
                   for script in scripts:
                       try:
@@ -98,7 +104,7 @@ jobs:
                       except:
                           continue
                   
-                  # Yedek CSS Yontemi
+                  # YONTEM 2: CSS (Yedek)
                   if not price:
                       candidates = soup.select("span.money-amount__main, div.product-detail-info__price-amount span")
                       for tag in candidates:
@@ -113,19 +119,17 @@ jobs:
                               continue
 
           except Exception as e:
-              # Kritik hata olursa bildirim at
-              send_telegram(f"⚠️ HATA: Kod calisirken sorun oldu: {str(e)}")
+              send_telegram(f"HATA: Kod calisirken sorun oldu: {str(e)}")
               exit(1)
 
           if not price:
-              # Fiyat bulunamazsa bile bildirim at ki kodun calistigini anlayalim
-              send_telegram(f"⚠️ DIKKAT: Urun sayfasina girildi ama fiyat okunamadi. Linki kontrol et.\n{URL}")
+              send_telegram(f"DIKKAT: Fiyat okunamadi. Linki kontrol et: {URL}")
               # Dosya hatasi vermesin
               if not os.path.exists("price.txt"): open("price.txt", "w").write("0")
               exit(0)
 
           # --- ISLEMLER ---
-          formatted = f"{price:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
+          formatted = f"{price:,.2f} TL"
           
           last_price = "0"
           if os.path.exists("price.txt"): last_price = open("price.txt").read().strip() or "0"
@@ -133,13 +137,16 @@ jobs:
           # Mesaj Hazirligi
           msg = None
 
+          print(f"Eski: {last_price}, Yeni: {price}")
+
           # Eger eski fiyat 0 ise (dosya silindiyse) VEYA 1990 ise (eski urunse) -> ILK BILDIRIMI AT
           if float(last_price) == 0.0 or float(last_price) == 1990.0:
-              msg = f"✅ TAKİP YENİDEN BAŞLADI\n\nÜrün: {product_name}\nGüncel Fiyat: {formatted}\n\nLink: {URL}"
+              msg = f"TAKIP BASLADI\n\nUrun: {product_name}\nGuncel Fiyat: {formatted}\n\nLink: {URL}"
           
           elif float(last_price) != price:
-              msg = f"🚨 FİYAT DEĞİŞTİ!\n\nEski: {last_price} TL\nYeni: {formatted}\n\nLink: {URL}"
+              msg = f"FIYAT DEGISTI!\n\nEski: {last_price} TL\nYeni: {formatted}\n\nLink: {URL}"
 
+          # Bu seferlik, kontrol amacli her calistiginda mesaj atmasini isterseniz asagidaki if'i kaldirin
           if msg:
               send_telegram(msg)
           
