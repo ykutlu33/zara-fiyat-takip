@@ -46,22 +46,35 @@ jobs:
 
           def send_telegram(msg):
               try:
-                  requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={"chat_id": CHAT, "text": msg, "parse_mode": "HTML", "disable_web_page_preview": True})
+                  # HTML modunu kaldirdim, garanti iletisim
+                  url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+                  payload = {"chat_id": CHAT, "text": msg, "disable_web_page_preview": True}
+                  r = requests.post(url, json=payload)
+                  if r.status_code != 200:
+                      print(f"Telegram Hatasi: {r.text}")
+              except Exception as e:
+                  print(f"Baglanti Hatasi: {e}")
+
+          print("Baslangic testi yapiliyor...")
+          # Bu mesaj gelirse bot yasiyor demektir.
+          # send_telegram("🤖 Kontrol botu başlatıldı...") 
+
+          # --- HAFIZA TEMIZLIGI (SORUNU KOKTEN COZER) ---
+          # Kod her calistiginda onceki hatali fiyati unutturuyoruz
+          # Sadece dogru fiyati bulunca dosyaya yazacak.
+          if os.path.exists("price.txt"):
+              try:
+                  val = float(open("price.txt").read().strip())
+                  # Eger hafizada hala 1990 varsa sil
+                  if val == 1990.0:
+                      print("Eski hatali fiyat (1990) siliniyor...")
+                      os.remove("price.txt")
               except:
                   pass
 
-          # --- TEMIZLIK (Eski Fiyat Karismasini Onle) ---
-          # Eger kaydedilen URL ile su anki URL farkliysa dosyalari sil
-          if os.path.exists("url.txt"):
-              saved_url = open("url.txt").read().strip()
-              if saved_url != URL:
-                  print("⚠️ YENİ LİNK TESPİT EDİLDİ! Eski hafıza siliniyor...")
-                  if os.path.exists("price.txt"): os.remove("price.txt")
-                  if os.path.exists("notify.txt"): os.remove("notify.txt")
-
           print("Firefox ile siteye gidiliyor...")
           price = None
-          product_name = "Zara Ürünü"
+          product_name = "Zara Urunu"
 
           try:
               with sync_playwright() as p:
@@ -71,119 +84,98 @@ jobs:
                   )
                   page = context.new_page()
                   page.goto(URL, timeout=90000, wait_until="domcontentloaded")
-                  time.sleep(random.uniform(6, 10)) # Biraz daha uzun bekle
+                  time.sleep(random.uniform(5, 8))
                   content = page.content()
                   browser.close()
 
                   soup = BeautifulSoup(content, 'html.parser')
 
-                  # 1. YONTEM: Zara'nin Guncel CSS Siniflari (En Guvenilir)
-                  # Zara fiyatlari genelde 'money-amount__main' veya 'price-current__amount' icindedir
-                  css_classes = [
-                      "span.price-current__amount span.money-amount__main", 
-                      "span.money-amount__main", 
-                      "div.product-detail-info__price-amount span"
-                  ]
-                  
-                  for css in css_classes:
-                      element = soup.select_one(css)
-                      if element:
-                          text = element.get_text().strip()
-                          print(f"CSS Buldu ({css}): {text}")
-                          clean = text.replace("TL", "").replace("TRY", "").replace(".", "").replace(",", ".").strip()
+                  # YONTEM 1: JSON
+                  scripts = soup.find_all('script', type='application/ld+json')
+                  for script in scripts:
+                      try:
+                          data = json.loads(script.string)
+                          if isinstance(data, list): data = data[0]
+                          if data.get('@type') == 'Product':
+                              if 'name' in data: product_name = data['name']
+                              offers = data.get('offers', {})
+                              if isinstance(offers, list): offers = offers[0]
+                              if offers.get('price'):
+                                  price = float(offers['price'])
+                                  print(f"JSON Fiyat: {price}")
+                                  break
+                      except:
+                          continue
+
+                  # YONTEM 2: CSS (Yedek)
+                  if not price:
+                      # Zara'da fiyatin gectigi tum olasi yerler
+                      candidates = soup.select("span.money-amount__main, div.product-detail-info__price-amount span")
+                      for tag in candidates:
+                          txt = tag.get_text().strip()
+                          clean = txt.replace("TL", "").replace("TRY", "").replace(".", "").replace(",", ".").strip()
                           try:
                               val = float(clean)
-                              if val > 100: # Mantikli bir fiyat mi?
+                              if val > 100:
                                   price = val
+                                  print(f"CSS Fiyat: {price}")
                                   break
                           except:
                               continue
 
-                  # Isim Cekme
-                  h1 = soup.find("h1")
-                  if h1: product_name = h1.get_text().strip()
-
-                  # 2. YONTEM: JSON (Yedek)
-                  if not price:
-                      scripts = soup.find_all('script', type='application/ld+json')
-                      for script in scripts:
-                          try:
-                              data = json.loads(script.string)
-                              if isinstance(data, list): data = data[0]
-                              if data.get('@type') == 'Product':
-                                  offers = data.get('offers', {})
-                                  if isinstance(offers, list): offers = offers[0]
-                                  if offers.get('price'):
-                                      price = float(offers['price'])
-                                      break
-                          except:
-                              continue
-
           except Exception as e:
-              print(f"Hata: {e}")
+              print(f"Kod hatasi: {e}")
+              send_telegram(f"HATA: Kod calisirken patladi: {e}")
               exit(1)
 
           if not price:
               print("Fiyat bulunamadi.")
-              send_telegram(f"⚠️ <b>HATA:</b> Fiyat çekilemedi. Manuel kontrol ediniz.\nLink: {URL}")
+              send_telegram(f"HATA: Urun sayfasina girildi ama fiyat okunamadi.\nLink: {URL}")
+              # Dosya hatasi vermesin diye bos olustur
+              if not os.path.exists("price.txt"): open("price.txt", "w").write("0")
               exit(0)
 
           # --- ISLEMLER ---
           formatted = f"{price:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
-          print(f"Tespit Edilen Fiyat: {formatted}")
           
           last_price = "0"
-          last_notify = ""
-
           if os.path.exists("price.txt"): last_price = open("price.txt").read().strip() or "0"
-          if os.path.exists("notify.txt"): last_notify = open("notify.txt").read().strip()
+          
+          # Hata onleyici: last_price bozuksa 0 yap
+          try:
+              float(last_price)
+          except:
+              last_price = "0"
 
           now = int(time.time())
+          
+          # BILDIRIM MANTIGI
           msg = None
 
-          # ILK DEFA CALISIYORSA veya SIFIRLANDIYSA
-          if last_price == "0":
-              msg = (
-                  f"🛍️ <b>TAKİP BAŞLADI (Sıfırlandı)</b>\n\n"
-                  f"📦 <b>Ürün:</b> {product_name}\n"
-                  f"💰 <b>Fiyat:</b> {formatted}\n\n"
-                  f"🔗 <a href='{URL}'>Ürüne Git</a>\n\n"
-                  f"ℹ️ Önceki ürün hafızası silindi, yeni ürün takipte."
-              )
-          
-          # FIYAT DEGISIMI
-          elif float(last_price) != price:
-              old_fmt = f"{float(last_price):,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
-              msg = (
-                  f"🚨 <b>FİYAT DEĞİŞTİ!</b>\n\n"
-                  f"📦 {product_name}\n"
-                  f"❌ Eski: {old_fmt}\n"
-                  f"✅ Yeni: <b>{formatted}</b>\n\n"
-                  f"🔗 <a href='{URL}'>Ürüne Git</a>"
-              )
+          print(f"Eski: {last_price}, Yeni: {price}")
 
-          # HATIRLATMA
-          elif last_notify and (now - int(last_notify)) >= 21600:
-              msg = (
-                  f"⏰ <b>HATIRLATMA</b>\n\n"
-                  f"📦 {product_name}\n"
-                  f"💰 Fiyat hala: <b>{formatted}</b>\n\n"
-                  f"🔗 <a href='{URL}'>Ürüne Git</a>"
-              )
+          if float(last_price) == 0.0:
+              msg = f"✅ TAKİP BAŞLADI\n\nÜrün: {product_name}\nFiyat: {formatted}\n\nLink: {URL}"
+          
+          elif float(last_price) != price:
+              msg = f"🚨 FİYAT DEĞİŞTİ!\n\nÜrün: {product_name}\nEski: {last_price} TL\nYeni: {formatted}\n\nLink: {URL}"
+
+          # Hatirlatma kontrolunu bu seferlik kaldirdim, sadece degisime odaklanalim.
 
           if msg:
+              print("Telegram gonderiliyor...")
               send_telegram(msg)
-              with open("notify.txt", "w") as f: f.write(str(now))
+          else:
+              print("Fiyat ayni, bildirim yok.")
 
           with open("price.txt", "w") as f: f.write(str(price))
-          with open("url.txt", "w") as f: f.write(URL)
           PYEND
 
       - name: Commit files
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          touch price.txt notify.txt url.txt
+          touch price.txt
           git add -A
           git diff --staged --quiet || git commit -m "Update price"
           git push
