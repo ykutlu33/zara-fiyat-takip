@@ -2,7 +2,7 @@ name: Zara Fiyat Takip
 
 on:
   schedule:
-    - cron: '*/20 * * * *'
+    - cron: '*/30 * * * *' # 30 dakikada bir (Cok sik yapip dikkat cekmeyelim)
   workflow_dispatch:
 
 permissions:
@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install requests playwright beautifulsoup4
-          playwright install chromium
+          playwright install firefox
           playwright install-deps
 
       - name: Check price
@@ -33,131 +33,130 @@ jobs:
           import requests
           import os
           import time
+          import json
           import random
           from bs4 import BeautifulSoup
           from playwright.sync_api import sync_playwright
 
-          # ===== KISISEL AYARLARINIZ EKLENDI =====
+          # ===== AYARLAR =====
           TOKEN = "8375130122:AAHXVaMo-XXZvkd-MEsoOdEVpdtkqc50psg"
           CHAT  = "1234645010"
           URL   = "https://www.zara.com/tr/tr/hayvan-desenli-kisa-suni-kurk-kaban-zw-collection-p04369240.html?v1=489488534"
-          # =======================================
+          # ===================
 
           def send_telegram(msg):
               try:
-                  url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-                  requests.post(url, json={"chat_id": CHAT, "text": msg})
-              except Exception as e:
-                  print(f"Telegram gonderilemedi: {e}")
+                  requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={"chat_id": CHAT, "text": msg})
+              except:
+                  pass
 
-          print("Playwright baslatiliyor...")
-          
+          print("Firefox tarayicisi hazirlaniyor...")
           price = None
 
           try:
               with sync_playwright() as p:
-                  # Bot korumasini asmak icin ozel parametreler
-                  browser = p.chromium.launch(
-                      headless=True,
-                      args=[
-                          '--disable-blink-features=AutomationControlled',
-                          '--no-sandbox',
-                          '--disable-setuid-sandbox'
-                      ]
-                  )
+                  # Chrome yerine FIREFOX kullaniyoruz (Daha az engellenir)
+                  browser = p.firefox.launch(headless=True)
                   
-                  # Gercek bir iPhone gibi davranalim (Mobil gorunum bazen daha basittir)
+                  # Mozilla Firefox User Agent
                   context = browser.new_context(
-                      user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+                      user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
+                      viewport={"width": 1920, "height": 1080}
                   )
                   
                   page = context.new_page()
                   
-                  # Siteye git
-                  print("Site yukleniyor...")
-                  page.goto(URL, timeout=90000)
+                  # Bot olmadigimizi kanitlamak icin fare hareketleri simulesi (bazen ise yarar)
+                  print("Siteye gidiliyor...")
+                  page.goto(URL, timeout=90000, wait_until="domcontentloaded")
                   
-                  # Yuklenmesi icin rastgele bekle (Insan taklidi)
+                  # Sayfanin tam yuklenmesi icin rastgele bekle
                   time.sleep(random.uniform(5, 8))
                   
-                  # HTML icerigini al
                   content = page.content()
                   browser.close()
-                  
-                  # BeautifulSoup ile analiz et
+
                   soup = BeautifulSoup(content, 'html.parser')
-                  
-                  # YONTEM 1: Meta verisi (En temiz veri)
-                  meta = soup.find("meta", property="product:price:amount")
-                  if meta:
+
+                  # --- YONTEM 1: JSON-LD (Google Verisi) ---
+                  # Bu veri Google icin konulur ve genelde bot korumasina takilmaz.
+                  scripts = soup.find_all('script', type='application/ld+json')
+                  for script in scripts:
                       try:
-                          price = float(meta["content"])
-                          print(f"Meta etiketinden fiyat bulundu: {price}")
-                      except:
-                          pass
-                  
-                  # YONTEM 2: Görünür fiyat etiketleri (Zara guncel classlari)
-                  if not price:
-                      classes = ["price-current__amount", "money-amount__main", "price__amount"]
-                      for cls in classes:
-                          tag = soup.find(class_=cls)
-                          if tag:
-                              txt = tag.get_text().strip()
-                              clean = txt.replace("TL", "").replace("TRY", "").replace(".", "").replace(",", ".").strip()
-                              try:
-                                  price = float(clean)
-                                  print(f"HTML class ({cls}) ile bulundu: {price}")
+                          data = json.loads(script.string)
+                          # Bazen liste olarak doner
+                          if isinstance(data, list):
+                              data = data[0]
+                          
+                          # Urun semasini bulalim
+                          if data.get('@type') == 'Product':
+                              offers = data.get('offers', {})
+                              # Fiyat bazen liste olabilir
+                              if isinstance(offers, list):
+                                  offers = offers[0]
+                              
+                              price_val = offers.get('price')
+                              if price_val:
+                                  price = float(price_val)
+                                  print(f"BINGO! JSON verisinden fiyat bulundu: {price}")
                                   break
-                              except:
-                                  continue
+                      except:
+                          continue
+
+                  # --- YONTEM 2: Ozel Regex (Sayfadaki tum sayilari tara) ---
+                  if not price:
+                      import re
+                      # "3.590 TL" veya "3590 TL" gibi ifadeleri arar
+                      text_content = soup.get_text()
+                      # Zara formatina ozel regex
+                      matches = re.findall(r'(\d{1,2}(?:\.?\d{3})*,\d{2})\s*(?:TL|TRY)', text_content)
+                      
+                      possible_prices = []
+                      for m in matches:
+                          clean = float(m.replace(".", "").replace(",", "."))
+                          if clean > 100: # 100 TL alti urun olmaz diye varsayiyoruz (yanlis veriyi eler)
+                              possible_prices.append(clean)
+                      
+                      if possible_prices:
+                          # Genelde en yuksek fiyat gercek fiyattir (taksit seceneklerini elemek icin)
+                          price = max(possible_prices)
+                          print(f"Regex ile bulundu: {price}")
 
           except Exception as e:
-              print(f"HATA: {e}")
-              # Kritik hata olursa bildirim at
-              send_telegram(f"⚠️ HATA: Kod çalışırken sorun oluştu.\n{str(e)}")
+              send_telegram(f"⚠️ HATA: Kod calisirken patladi:\n{str(e)}")
               exit(1)
 
-          # Fiyat hala yoksa
           if not price:
-              print("Fiyat bulunamadi.")
-              # Dosya yoksa olustur
+              # Fiyat bulunamazsa onceki degeri koru ki hata vermesin
+              print("Fiyat bulunamadi, erişim engellenmiş olabilir.")
               if not os.path.exists("price.txt"):
                   with open("price.txt", "w") as f: f.write("0")
               
-              send_telegram(f"⚠️ DİKKAT: Ürün sayfasına girildi ama fiyat okunamadı.\n\nZara erişimi engellemiş olabilir.\n\n🔗 {URL}")
+              send_telegram(f"⚠️ Fiyat hala okunamiyor. Zara GitHub IP'lerini engelliyor olabilir. Manuel kontrol ediniz.\n{URL}")
               exit(0)
 
-          # Fiyat formatlama
+          # --- ISLEMLER ---
           formatted = f"{price:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
-          print(f"Guncel Fiyat: {formatted}")
-
-          # Kayitli verileri oku
+          
           last_price = "0"
           last_notify = ""
 
           if os.path.exists("price.txt"):
               with open("price.txt", "r") as f: last_price = f.read().strip() or "0"
-          
           if os.path.exists("notify.txt"):
               with open("notify.txt", "r") as f: last_notify = f.read().strip()
 
           now = int(time.time())
           msg = None
 
-          # Mantik Kontrolu
           if last_price == "0":
-              msg = f"🛍️ TAKİP BAŞLADI\n\n💰 Fiyat: {formatted}\n\n🔗 {URL}"
+              msg = f"✅ BAŞARILI! Takip Başladı (Firefox Modu)\n\n💰 Fiyat: {formatted}\n\n🔗 {URL}"
           
           elif float(last_price) != price:
-              old = float(last_price)
-              diff = price - old
-              emoji = "📉" if diff < 0 else "📈"
-              msg = f"{emoji} FİYAT DEĞİŞTİ!\n\nEski: {old:,.2f} TL\nYeni: {formatted}\nFark: {diff:,.2f} TL\n\n🔗 {URL}"
+              msg = f"🚨 FİYAT DEĞİŞTİ!\n\nEski: {last_price} TL\nYeni: {formatted}\n\n🔗 {URL}"
           
-          elif last_notify and (now - int(last_notify) if last_notify.isdigit() else 999999) >= 21600:
-              msg = f"⏰ HATIRLATMA\n\nFiyat hala: {formatted}\n\n🔗 {URL}"
-          else:
-              print("Fiyat ayni, bildirim zamani gelmedi.")
+          elif last_notify and (now - int(last_notify)) >= 21600:
+               msg = f"⏰ Bildirim: Fiyat hala {formatted}\n{URL}"
 
           if msg:
               send_telegram(msg)
