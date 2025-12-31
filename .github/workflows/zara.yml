@@ -2,7 +2,7 @@ name: Zara Fiyat Takip
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -189,7 +189,7 @@ jobs:
               exit(0)
 
           db["check_count"] += 1
-          if db["check_count"] >= 12:
+          if db["check_count"] >= 24:
               first_p = db.get("first_price", price)
               total_diff = first_p - price
               
