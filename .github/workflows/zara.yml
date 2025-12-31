@@ -50,7 +50,7 @@ jobs:
               except Exception as e:
                   print("Telegram hata:", e)
 
-          price = None
+          price_holder = {"price": None}
 
           print("Tarayıcı başlatılıyor")
 
@@ -64,12 +64,11 @@ jobs:
               page = context.new_page()
 
               def handle_response(response):
-                  nonlocal price
                   try:
                       if "product" in response.url and response.request.method == "GET":
                           data = response.json()
-                          if "price" in data and "value" in data["price"]:
-                              price = data["price"]["value"] / 100
+                          if isinstance(data, dict) and "price" in data and "value" in data["price"]:
+                              price_holder["price"] = data["price"]["value"] / 100
                   except:
                       pass
 
@@ -79,10 +78,12 @@ jobs:
               page.wait_for_timeout(8000)
               browser.close()
 
+          price = price_holder["price"]
+
           if not price:
               send_telegram(
                   "⚠️ Fiyat çekilemedi\n\n"
-                  "Zara bot koruması veya API yapısı değişmiş olabilir\n\n"
+                  "Zara API yapısı değişmiş veya bot koruması engellemiş olabilir\n\n"
                   f"{URL}"
               )
               exit(0)
