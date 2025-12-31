@@ -2,7 +2,7 @@ name: Zara Fiyat Takip
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # Zara çok sık isteği engelleyebilir, 15 dk idealdir.
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -32,29 +32,42 @@ jobs:
           import time
           from bs4 import BeautifulSoup
 
-          # GUVENLIK UYARISI: Bu token ve chat id'yi GitHub Secrets icine almaniz onerilir.
+          # --- AYARLAR ---
           TOKEN = "8375130122:AAHXVaMo-XXZvkd-MEsoOdEVpdtkqc50psg"
           CHAT = "1234645010"
           URL = "https://www.zara.com/tr/tr/hayvan-desenli-kisa-suni-kurk-kaban-zw-collection-p04369240.html?v1=489488534"
+          # ---------------
 
-          print("Fiyat kontrol ediliyor...")
+          def send_telegram(message):
+              try:
+                  url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+                  requests.post(url, json={"chat_id": CHAT, "text": message})
+              except Exception as e:
+                  print(f"Telegram hatasi: {e}")
 
-          # Daha guclu bir User-Agent kullanalim
-          headers = {
-              "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
-          }
+          print("Siteye baglaniliyor...")
           
+          # Zara gibi siteler icin gelismis basliklar
+          headers = {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+              "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+              "Referer": "https://www.google.com/"
+          }
+
+          response = None
           try:
-              response = requests.get(URL, headers=headers, timeout=30)
+              session = requests.Session()
+              response = session.get(URL, headers=headers, timeout=30)
           except Exception as e:
-              print(f"Hata: Siteye erisilemedi. {e}")
+              print(f"Baglanti hatasi: {e}")
+              send_telegram(f"⚠️ HATA: Zara sitesine baglanilamadi.\n\nHata: {str(e)}")
               exit(1)
 
           soup = BeautifulSoup(response.content, 'html.parser')
           price = None
 
-          # YONTEM 1: Meta etiketlerinden fiyat bulma (En garantisi budur)
+          # 1. Yontem: Meta etiketleri (En saglami)
           meta_price = soup.find("meta", property="product:price:amount")
           if not meta_price:
               meta_price = soup.find("meta", property="og:price:amount")
@@ -62,97 +75,83 @@ jobs:
           if meta_price:
               try:
                   price = float(meta_price["content"])
-                  print(f"Meta etiketinden fiyat bulundu: {price}")
               except:
                   pass
 
-          # YONTEM 2: Eger meta yoksa script icindeki JSON verisini veya span'lari dene
+          # 2. Yontem: HTML icinde arama (Yedek)
           if not price:
-              # Zara genelde fiyatı 'price-current__amount' class'ında tutar
-              span_price = soup.find("span", class_="price-current__amount")
-              if span_price:
-                  clean_text = span_price.text.replace("TL", "").replace(".", "").replace(",", ".").strip()
-                  try:
-                      price = float(clean_text)
-                      print(f"HTML span icinden fiyat bulundu: {price}")
-                  except:
-                      pass
+              # 'price' iceren span elementlerini tara
+              candidates = soup.find_all("span", class_=lambda x: x and "price" in x)
+              for tag in candidates:
+                  text = tag.get_text().strip()
+                  # Basit regex mantigi: "3.590,00 TL" formatini yakala
+                  if "TL" in text:
+                      clean = text.replace("TL", "").replace(".", "").replace(",", ".").strip()
+                      try:
+                          val = float(clean)
+                          if val > 100: # Mantikli bir fiyat mi?
+                              price = val
+                              break
+                      except:
+                          continue
 
+          # Eger fiyat hala bulunamadiysa
           if not price:
-              print("HATA: Fiyat hicbir yontemle bulunamadi! HTML yapisi degismis olabilir.")
-              # Hata ayiklama icin HTML'in kucuk bir kismini yazdiralim
-              print(str(soup)[:500]) 
-              exit(0)
+              print("Fiyat bulunamadi!")
+              # Onceki hatayi onlemek icin bos bir price.txt olusturalim
+              if not os.path.exists("price.txt"):
+                  with open("price.txt", "w") as f: f.write("0")
+              
+              # Size bildirim gonderiyoruz ki sorunu anlayin
+              send_telegram(f"⚠️ DIKKAT: Fiyat sayfadan çekilemedi.\n\nSebep: Zara botu engellemis olabilir veya HTML yapisi degismis.\n\n🔗 {URL}")
+              exit(0) # Kod burada biter
 
+          # Fiyat bulunduysa isleme devam et
           formatted = f"{price:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
-          print(f"Guncel islenen fiyat: {formatted}")
+          print(f"Guncel Fiyat: {formatted}")
 
           last = ""
           last_notify = ""
           
-          if os.path.exists("price.txt"):
-              with open("price.txt", "r") as f:
-                  last = f.read().strip()
-          
-          if os.path.exists("notify.txt"):
-              with open("notify.txt", "r") as f:
-                  last_notify = f.read().strip()
+          # Dosyalar yoksa hata vermemesi icin olustur
+          if not os.path.exists("price.txt"):
+              with open("price.txt", "w") as f: f.write(str(price))
+          if not os.path.exists("notify.txt"):
+              with open("notify.txt", "w") as f: f.write("")
 
-          print(f"Onceki kayitli fiyat: {last}")
+          with open("price.txt", "r") as f: last = f.read().strip()
+          with open("notify.txt", "r") as f: last_notify = f.read().strip()
+
           now = int(time.time())
           msg = None
 
-          if not last:
-              msg = f"🛍️ ZARA TAKİP BAŞLADI!\n\n📦 Kürk Kaban\n💰 Fiyat: {formatted}\n\n🔗 {URL}"
-              print("Ilk calisma!")
-
+          # Ilk calistirma veya fiyat degisimi
+          if not last or last == "0":
+              msg = f"🛍️ ZARA TAKİP AKTİF!\n\n💰 Fiyat: {formatted}\n\n🔗 {URL}"
+          
           elif float(last) != price:
               old = float(last)
               diff = price - old
-              old_fmt = f"{old:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
-              
-              emoji = "📉" if diff < 0 else "📈"
-              msg = f"{emoji} FİYAT DEĞİŞTİ!\n\nEski: {old_fmt}\nYeni: {formatted}\nFark: {diff:.2f} TL\n\n🔗 {URL}"
-              print("Fiyat degisti!")
+              msg = f"🚨 FİYAT DEĞİŞTİ!\n\nEski: {old}\nYeni: {formatted}\nFark: {diff}\n\n🔗 {URL}"
 
-          elif last_notify and (now - int(last_notify)) >= 21600: # 6 saat
-              msg = f"⏰ HATIRLATMA\n\n💰 Fiyat hala: {formatted}\n\n🔗 {URL}"
-              print("Hatirlatma zamani!")
-
-          else:
-              print("Fiyat ayni, bildirim zamani gelmedi.")
+          # Hatirlatma (6 saatte bir)
+          elif last_notify and (now - int(last_notify) if last_notify.isdigit() else 999999) >= 21600:
+              msg = f"⏰ HATIRLATMA\n\nFiyat hala: {formatted}\n\n🔗 {URL}"
 
           if msg:
-              try:
-                  r = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={"chat_id": CHAT, "text": msg})
-                  print(f"Telegram Yaniti: {r.status_code}")
-                  
-                  if r.status_code == 200:
-                      with open("notify.txt", "w") as f:
-                          f.write(str(now))
-                  else:
-                      print(r.text)
-              except Exception as e:
-                  print(f"Telegram gonderim hatasi: {e}")
+              send_telegram(msg)
+              with open("notify.txt", "w") as f: f.write(str(now))
 
-          # Fiyati her zaman guncelle
-          with open("price.txt", "w") as f:
-              f.write(str(price))
+          # Fiyati kaydet
+          with open("price.txt", "w") as f: f.write(str(price))
           PYEND
       
       - name: Commit files
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          
-          # Hata almamak için dosyalar yoksa boş olarak oluştur
+          # Dosyalar yoksa olustur ki hata vermesin
           touch price.txt notify.txt
-          
-          # Spesifik isim yerine tüm degisiklikleri ekle (-A)
           git add -A
-          
-          # Eğer değişiklik varsa commit yap, yoksa hata verme ve devam et
-          git diff --staged --quiet || git commit -m "Update price data"
-          
-          # Hata olsa bile push yapmayı dene
+          git diff --staged --quiet || git commit -m "Update price"
           git push
