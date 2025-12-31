@@ -2,7 +2,7 @@ name: Zara Fiyat Takip
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # 30 dakikada bir kontrol
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -41,135 +41,110 @@ jobs:
           # ===== AYARLAR =====
           TOKEN = "8375130122:AAHXVaMo-XXZvkd-MEsoOdEVpdtkqc50psg"
           CHAT  = "1234645010"
+          # YENI CEKET LINKI
           URL   = "https://www.zara.com/tr/tr/cift-tarafli-cift-yuzlu-ceket-p06318254.html"
           # ===================
 
           def send_telegram(msg):
               try:
-                  requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={"chat_id": CHAT, "text": msg})
+                  requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={"chat_id": CHAT, "text": msg, "parse_mode": "HTML", "disable_web_page_preview": True})
               except:
                   pass
 
-          print("Firefox (Gizli Mod) baslatiliyor...")
+          print("Firefox baslatiliyor...")
           price = None
-          product_name = "Zara Ürünü" # Varsayilan isim
+          product_name = "Zara Ürünü"
 
           try:
               with sync_playwright() as p:
-                  # Firefox, Chrome'a gore daha az engellenir
                   browser = p.firefox.launch(headless=True)
                   context = browser.new_context(
                       user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0"
                   )
                   page = context.new_page()
-                  
-                  print("Siteye gidiliyor...")
                   page.goto(URL, timeout=90000, wait_until="domcontentloaded")
-                  time.sleep(random.uniform(5, 8)) # Insan taklidi bekleme
-                  
+                  time.sleep(random.uniform(5, 8))
                   content = page.content()
                   browser.close()
 
                   soup = BeautifulSoup(content, 'html.parser')
 
-                  # --- 1. JSON-LD VERISI (En Garantisi) ---
+                  # JSON Verisi (En Garantisi)
                   scripts = soup.find_all('script', type='application/ld+json')
                   for script in scripts:
                       try:
                           data = json.loads(script.string)
                           if isinstance(data, list): data = data[0]
-                          
                           if data.get('@type') == 'Product':
-                              # Ismi cek
-                              if 'name' in data:
-                                  product_name = data['name']
-                              
-                              # Fiyati cek
+                              if 'name' in data: product_name = data['name']
                               offers = data.get('offers', {})
                               if isinstance(offers, list): offers = offers[0]
-                              
                               if offers.get('price'):
                                   price = float(offers['price'])
-                                  print(f"JSON Fiyat: {price}")
                                   break
                       except:
                           continue
                   
-                  # --- 2. YEDEK YONTEM (HTML Baslik ve Meta) ---
+                  # HTML Yedek Yontem
                   if not price:
-                      # Isim bulma (h1)
                       h1 = soup.find("h1")
                       if h1: product_name = h1.get_text().strip()
-
-                      # Regex ile fiyat
                       import re
                       text = soup.get_text()
                       matches = re.findall(r'(\d{1,3}(?:\.?\d{3})*,\d{2})\s*(?:TL|TRY)', text)
-                      vals = []
-                      for m in matches:
-                          clean = float(m.replace(".", "").replace(",", "."))
-                          if clean > 100: vals.append(clean)
-                      if vals:
-                          price = max(vals) # En yuksek deger genelde asil fiyattir
-                          print(f"Regex Fiyat: {price}")
+                      vals = [float(m.replace(".", "").replace(",", ".")) for m in matches if float(m.replace(".", "").replace(",", ".")) > 100]
+                      if vals: price = max(vals)
 
           except Exception as e:
-              send_telegram(f"⚠️ HATA: Kod çalışırken hata oluştu:\n{str(e)}")
+              print(f"Hata: {e}")
               exit(1)
 
           if not price:
               print("Fiyat bulunamadi.")
-              if not os.path.exists("price.txt"):
-                  with open("price.txt", "w") as f: f.write("0")
-              send_telegram(f"⚠️ DİKKAT: Ürün sayfasına erişildi ama fiyat okunamadı.\nLink: {URL}")
+              # Dosya hatasi vermesin diye bos dosya olustur
+              if not os.path.exists("price.txt"): open("price.txt", "w").write("0")
               exit(0)
 
-          # --- MESAJ FORMATLAMA ---
+          # --- MESAJ FORMATLAMA (Attigin Gorseldeki Gibi) ---
           formatted = f"{price:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
           
           last_price = "0"
           last_notify = ""
 
-          if os.path.exists("price.txt"):
-              with open("price.txt", "r") as f: last_price = f.read().strip() or "0"
-          if os.path.exists("notify.txt"):
-              with open("notify.txt", "r") as f: last_notify = f.read().strip()
+          if os.path.exists("price.txt"): last_price = open("price.txt").read().strip() or "0"
+          if os.path.exists("notify.txt"): last_notify = open("notify.txt").read().strip()
 
           now = int(time.time())
           msg = None
 
-          # 1. ILK BASLAMA BILDIRIMI
+          # ILK MESAJ
           if last_price == "0":
               msg = (
-                  f"✅ TAKİP BAŞLADI\n\n"
-                  f"Ürün ismi: {product_name}\n"
-                  f"Başlangıç fiyatı: {formatted}\n\n"
-                  f"🔗 Ürün Linki: {URL}\n\n"
-                  f"ℹ️ Fiyat değişince bildirim alacaksınız."
+                  f"🛍️ <b>Zara Fiyat Takibi Başladı!</b>\n\n"
+                  f"📦 <b>Ürün:</b> {product_name}\n"
+                  f"💰 <b>Başlangıç Fiyatı:</b> {formatted}\n\n"
+                  f"🔗 <a href='{URL}'>Ürüne Git</a>\n\n"
+                  f"✅ Fiyat değişince bildirim alacaksınız!"
               )
           
-          # 2. FIYAT DEGISINCE BILDIRIM
+          # DEGISIM MESAJI
           elif float(last_price) != price:
-              old = float(last_price)
-              old_fmt = f"{old:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
-              diff = price - old
-              emoji = "📉" if diff < 0 else "📈"
-              
+              old_fmt = f"{float(last_price):,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
               msg = (
-                  f"{emoji} FİYAT DEĞİŞTİ!\n\n"
-                  f"Ürün ismi: {product_name}\n"
-                  f"Eski Fiyat: {old_fmt}\n"
-                  f"Yeni Fiyat: {formatted}\n\n"
-                  f"🔗 Ürün Linki: {URL}"
+                  f"🚨 <b>FİYAT DEĞİŞTİ!</b>\n\n"
+                  f"📦 {product_name}\n"
+                  f"❌ Eski: {old_fmt}\n"
+                  f"✅ Yeni: <b>{formatted}</b>\n\n"
+                  f"🔗 <a href='{URL}'>Ürüne Git</a>"
               )
 
-          # 3. 6 SAAT SONRA HATIRLATMA
+          # HATIRLATMA (6 Saat)
           elif last_notify and (now - int(last_notify)) >= 21600:
               msg = (
-                  f"⏰ HATIRLATMA (6 Saat)\n\n"
-                  f"Ürün ismi: {product_name}\n"
-                  f"Güncel Fiyat: {formatted}\n\n"
-                  f"🔗 Ürün Linki: {URL}"
+                  f"⏰ <b>HATIRLATMA</b>\n\n"
+                  f"📦 {product_name}\n"
+                  f"💰 Fiyat hala: <b>{formatted}</b>\n\n"
+                  f"🔗 <a href='{URL}'>Ürüne Git</a>"
               )
 
           if msg:
@@ -183,6 +158,7 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
+          # --- BU SATIR HATAYI COZER: Dosyalari bastan olusturur ---
           touch price.txt notify.txt
           git add -A
           git diff --staged --quiet || git commit -m "Update price"
