@@ -86,6 +86,29 @@ jobs:
           # BeautifulSoup ile analize basla
           soup = BeautifulSoup(html_content, 'html.parser')
           price = None
+          
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    context = browser.new_context(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+    )
+    page = context.new_page()
+
+    def handle_response(response):
+        nonlocal price
+        try:
+            if "product" in response.url and response.request.method == "GET":
+                data = response.json()
+                # Zara fiyat genelde burada
+                price = data["price"]["value"] / 100
+        except:
+            pass
+
+    page.on("response", handle_response)
+
+    page.goto(URL, timeout=60000)
+    page.wait_for_timeout(8000)
+    browser.close()
 
           # YONTEM 1: Meta etiketleri
           meta_price = soup.find("meta", property="product:price:amount")
