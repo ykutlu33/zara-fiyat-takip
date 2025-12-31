@@ -40,16 +40,26 @@ jobs:
           from playwright.sync_api import sync_playwright
 
           TOKEN = "8375130122:AAHXVaMo-XXZvkd-MEsoOdEVpdtkqc50psg"
-          CHAT  = "1234645010"
-          URL   = "https://www.zara.com/tr/tr/cift-tarafli-cift-yuzlu-ceket-p06318254.html"
+          
+          GROUP_CHAT = "-5170519870"
+          PERSONAL_CHAT = "1234645010"
+          
+          URL = "https://www.zara.com/tr/tr/cift-tarafli-cift-yuzlu-ceket-p06318254.html"
 
-          def send_telegram(msg):
+          def send_telegram(msg, chat_id=GROUP_CHAT):
               url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-              payload = {"chat_id": CHAT, "text": msg}
+              payload = {"chat_id": chat_id, "text": msg, "parse_mode": "HTML", "disable_web_page_preview": True}
               try:
-                  requests.post(url, json=payload)
+                  r = requests.post(url, json=payload)
+                  return r.status_code == 200
               except:
-                  pass
+                  return False
+
+          def send_to_group(msg):
+              send_telegram(msg, GROUP_CHAT)
+
+          def send_to_admin(msg):
+              send_telegram(msg, PERSONAL_CHAT)
 
           def get_data():
               if os.path.exists("data.json"):
@@ -115,20 +125,11 @@ jobs:
                               continue
 
           except Exception as e:
-              msg = "❌ HATA OLUSTU\n"
-              msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
-              msg += f"Sayfa yuklenemedi:\n{str(e)[:100]}\n\n"
-              msg += f"🔗 {URL}"
-              send_telegram(msg)
+              send_to_admin(f"❌ HATA: {str(e)[:100]}")
               exit(1)
 
           if not price:
-              msg = "⚠️ UYARI\n"
-              msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
-              msg += "Fiyat bilgisi alinamadi.\n"
-              msg += "Urun kaldirilmis veya sayfa degismis olabilir.\n\n"
-              msg += f"🔗 {URL}"
-              send_telegram(msg)
+              send_to_admin(f"⚠️ Fiyat alinamadi: {URL}")
               exit(0)
 
           db = get_data()
@@ -136,16 +137,16 @@ jobs:
           
           # ILK CALISTIRMA
           if db["price"] == 0:
-              msg = "🛍️ TAKİP BAŞLADI\n"
+              msg = "🛍️ <b>YENİ ÜRÜN TAKİBİ</b>\n"
               msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
-              msg += f"📦 {product_name}\n\n"
-              msg += f"💰 Guncel Fiyat: {format_price(price)}\n\n"
-              msg += f"🔗 {URL}\n\n"
+              msg += f"📦 <b>{product_name}</b>\n\n"
+              msg += f"💰 Guncel Fiyat: <b>{format_price(price)}</b>\n\n"
+              msg += f"🔗 <a href='{URL}'>Urunu Gor</a>\n\n"
               msg += "━━━━━━━━━━━━━━━━━━━━\n"
-              msg += "ℹ️ Fiyat degisirse aninda bildirim alacaksiniz.\n"
-              msg += "⏰ Degisiklik olmazsa 6 saatte bir hatirlatma gelecek."
+              msg += "ℹ️ Fiyat degisirse gruba bildirim gelecek\n"
+              msg += "⏰ 6 saatte bir durum raporu paylasilacak"
               
-              send_telegram(msg)
+              send_to_group(msg)
               db["price"] = price
               db["first_price"] = price
               db["lowest_price"] = price
@@ -162,71 +163,68 @@ jobs:
               diff = old_price - price
               percent = (diff / old_price) * 100
               
-              # En dusuk/yuksek guncelle
               if price < db["lowest_price"]:
                   db["lowest_price"] = price
               if price > db["highest_price"]:
                   db["highest_price"] = price
               
               if price < old_price:
-                  # FIYAT DUSTU
-                  msg = "🔥 FİYAT DÜŞTÜ!\n"
+                  msg = "🔥 <b>FİYAT DÜŞTÜ!</b> 🔥\n"
                   msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
-                  msg += f"📦 {product_name}\n\n"
-                  msg += f"💸 Eski Fiyat: {format_price(old_price)}\n"
-                  msg += f"💰 Yeni Fiyat: {format_price(price)}\n\n"
-                  msg += f"📉 Dusus: {format_price(abs(diff))} (-%{abs(percent):.1f})\n\n"
+                  msg += f"📦 <b>{product_name}</b>\n\n"
+                  msg += f"💸 Eski Fiyat: <s>{format_price(old_price)}</s>\n"
+                  msg += f"💰 Yeni Fiyat: <b>{format_price(price)}</b>\n\n"
+                  msg += f"📉 Dusus: <b>{format_price(abs(diff))}</b> (-%{abs(percent):.1f})\n\n"
                   msg += "━━━━━━━━━━━━━━━━━━━━\n"
-                  msg += f"📊 En dusuk: {format_price(db['lowest_price'])}\n"
-                  msg += f"📊 En yuksek: {format_price(db['highest_price'])}\n\n"
-                  msg += f"🔗 {URL}\n\n"
+                  msg += f"📊 Takipteki en dusuk: {format_price(db['lowest_price'])}\n"
+                  msg += f"📊 Takipteki en yuksek: {format_price(db['highest_price'])}\n\n"
+                  msg += f"🔗 <a href='{URL}'>SATIN AL</a>\n\n"
                   msg += f"⏰ {now}"
               else:
-                  # FIYAT ARTTI
-                  msg = "📈 FİYAT ARTTI\n"
+                  msg = "📈 <b>FİYAT ARTTI</b>\n"
                   msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
-                  msg += f"📦 {product_name}\n\n"
+                  msg += f"📦 <b>{product_name}</b>\n\n"
                   msg += f"💰 Eski Fiyat: {format_price(old_price)}\n"
-                  msg += f"💸 Yeni Fiyat: {format_price(price)}\n\n"
-                  msg += f"📈 Artis: {format_price(abs(diff))} (+%{abs(percent):.1f})\n\n"
+                  msg += f"💸 Yeni Fiyat: <b>{format_price(price)}</b>\n\n"
+                  msg += f"📈 Artis: <b>{format_price(abs(diff))}</b> (+%{abs(percent):.1f})\n\n"
                   msg += "━━━━━━━━━━━━━━━━━━━━\n"
-                  msg += f"📊 En dusuk: {format_price(db['lowest_price'])}\n"
-                  msg += f"📊 En yuksek: {format_price(db['highest_price'])}\n\n"
-                  msg += f"🔗 {URL}\n\n"
+                  msg += f"📊 Takipteki en dusuk: {format_price(db['lowest_price'])}\n"
+                  msg += f"📊 Takipteki en yuksek: {format_price(db['highest_price'])}\n\n"
+                  msg += f"🔗 <a href='{URL}'>Urunu Gor</a>\n\n"
                   msg += f"⏰ {now}"
               
-              send_telegram(msg)
+              send_to_group(msg)
               db["price"] = price
               db["check_count"] = 0
               save_data(db)
               exit(0)
 
-          # 6 SAAT HATIRLATMA (12 kontrol x 30dk = 6 saat)
+          # 6 SAAT RAPOR
           db["check_count"] += 1
           if db["check_count"] >= 12:
               first_p = db.get("first_price", price)
               total_diff = first_p - price
               
-              msg = "⏰ 6 SAATLİK RAPOR\n"
+              msg = "⏰ <b>6 SAATLİK RAPOR</b>\n"
               msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
-              msg += f"📦 {product_name}\n\n"
-              msg += f"💰 Guncel Fiyat: {format_price(price)}\n\n"
+              msg += f"📦 <b>{product_name}</b>\n\n"
+              msg += f"💰 Guncel Fiyat: <b>{format_price(price)}</b>\n\n"
               
               if total_diff > 0:
-                  msg += f"📉 Baslangictan bu yana: {format_price(abs(total_diff))} dusus\n"
+                  msg += f"📉 Baslangictan bu yana: <b>{format_price(abs(total_diff))}</b> dusus\n"
               elif total_diff < 0:
-                  msg += f"📈 Baslangictan bu yana: {format_price(abs(total_diff))} artis\n"
+                  msg += f"📈 Baslangictan bu yana: <b>{format_price(abs(total_diff))}</b> artis\n"
               else:
                   msg += "➖ Baslangictan bu yana fiyat degismedi\n"
               
               msg += "\n━━━━━━━━━━━━━━━━━━━━\n"
               msg += f"📊 En dusuk: {format_price(db['lowest_price'])}\n"
               msg += f"📊 En yuksek: {format_price(db['highest_price'])}\n"
-              msg += f"📅 Takip baslangici: {db.get('start_date', 'Bilinmiyor')}\n\n"
-              msg += f"🔗 {URL}\n\n"
-              msg += "✅ Takip aktif - Fiyat degisirse bildirim alacaksiniz"
+              msg += f"📅 Takip baslangici: {db.get('start_date', '-')}\n\n"
+              msg += f"🔗 <a href='{URL}'>Urunu Gor</a>\n\n"
+              msg += "✅ Takip aktif"
               
-              send_telegram(msg)
+              send_to_group(msg)
               db["check_count"] = 0
           
           save_data(db)
