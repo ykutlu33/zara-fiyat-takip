@@ -48,17 +48,9 @@ jobs:
               url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
               payload = {"chat_id": chat_id, "text": msg}
               try:
-                  r = requests.post(url, json=payload)
-                  print(f"Telegram {chat_id}: {r.status_code} - {r.text[:100]}")
-                  return r.status_code == 200
-              except Exception as e:
-                  print(f"Telegram hata: {e}")
-                  return False
-
-          # TEST - gruba ve kisiye mesaj at
-          print("Test basladi...")
-          send_telegram("TEST: Gruba mesaj", GROUP_CHAT)
-          send_telegram("TEST: Kisiye mesaj", PERSONAL_CHAT)
+                  requests.post(url, json=payload)
+              except:
+                  pass
 
           def get_data():
               if os.path.exists("data.json"):
@@ -134,7 +126,6 @@ jobs:
           db = get_data()
           now = get_time()
           
-          # ILK CALISTIRMA
           if db["price"] == 0:
               msg = f"🛍️ YENİ ÜRÜN TAKİBİ\n"
               msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -157,7 +148,6 @@ jobs:
 
           old_price = db["price"]
           
-          # FIYAT DEGISTI
           if old_price != price:
               diff = old_price - price
               percent = (diff / old_price) * 100
@@ -198,7 +188,6 @@ jobs:
               save_data(db)
               exit(0)
 
-          # 6 SAAT RAPOR
           db["check_count"] += 1
           if db["check_count"] >= 12:
               first_p = db.get("first_price", price)
