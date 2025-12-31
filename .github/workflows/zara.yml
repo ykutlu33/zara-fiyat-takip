@@ -245,3 +245,52 @@ jobs:
           git add -A
           git diff --staged --quiet || git commit -m "Update price data"
           git push
+```
+
+## 📱 Bildirim Senaryoları:
+
+**1️⃣ İlk Başlatma:**
+```
+🛍️ TAKİP BAŞLADI
+
+📦 Çift Taraflı Çift Yüzlü Ceket
+
+💰 Güncel Fiyat: 2.990,00 TL
+
+🔗 [link]
+
+━━━━━━━━━━━━━━━━━━━━
+ℹ️ Fiyat değişirse anında bildirim alacaksınız.
+⏰ Değişiklik olmazsa 6 saatte bir hatırlatma gelecek.
+━━━━━━━━━━━━━━━━━━━━
+```
+
+**2️⃣ Fiyat Düşünce:**
+```
+🔥 FİYAT DÜŞTÜ!
+
+📦 Çift Taraflı Çift Yüzlü Ceket
+
+💸 Eski Fiyat: 2.990,00 TL
+💰 Yeni Fiyat: 2.490,00 TL
+
+📉 Düşüş: 500,00 TL (-%16.7)
+
+🔗 [link]
+```
+
+**3️⃣ 6 Saatlik Hatırlatma:**
+```
+⏰ 6 SAATLİK RAPOR
+
+📦 Çift Taraflı Çift Yüzlü Ceket
+
+💰 Güncel Fiyat: 2.990,00 TL
+
+📊 Takip başlangıcından bu yana fiyat değişmedi
+
+🔗 [link]
+
+━━━━━━━━━━━━━━━━━━━━
+✅ Takip aktif - Fiyat değişirse bildirim alacaksınız
+━━━━━━━━━━━━━━━━━━━━
