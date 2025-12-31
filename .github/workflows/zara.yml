@@ -45,34 +45,26 @@ jobs:
           # ===================
 
           def send_telegram(msg):
+              # HTML formatini kapattik, duz metin gonderiyoruz (Hata riskini sifirlamak icin)
+              url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+              payload = {"chat_id": CHAT, "text": msg, "disable_web_page_preview": False}
               try:
-                  # HTML modunu kaldirdim, garanti iletisim
-                  url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-                  payload = {"chat_id": CHAT, "text": msg, "disable_web_page_preview": True}
-                  r = requests.post(url, json=payload)
-                  if r.status_code != 200:
-                      print(f"Telegram Hatasi: {r.text}")
-              except Exception as e:
-                  print(f"Baglanti Hatasi: {e}")
+                  requests.post(url, json=payload)
+              except:
+                  pass
 
-          print("Baslangic testi yapiliyor...")
-          # Bu mesaj gelirse bot yasiyor demektir.
-          # send_telegram("🤖 Kontrol botu başlatıldı...") 
-
-          # --- HAFIZA TEMIZLIGI (SORUNU KOKTEN COZER) ---
-          # Kod her calistiginda onceki hatali fiyati unutturuyoruz
-          # Sadece dogru fiyati bulunca dosyaya yazacak.
+          # --- HAFIZA TEMIZLIGI ---
+          # Bu kod calistiginda eski 1990 kaydini siler, boylece bot "Yeni basliyorum" sanar.
           if os.path.exists("price.txt"):
               try:
-                  val = float(open("price.txt").read().strip())
-                  # Eger hafizada hala 1990 varsa sil
-                  if val == 1990.0:
-                      print("Eski hatali fiyat (1990) siliniyor...")
+                  content = open("price.txt").read().strip()
+                  # Eger iceride 1990 yaziyorsa o dosyayi sil
+                  if "1990" in content:
                       os.remove("price.txt")
               except:
                   pass
 
-          print("Firefox ile siteye gidiliyor...")
+          print("Firefox baslatiliyor...")
           price = None
           product_name = "Zara Urunu"
 
@@ -90,7 +82,7 @@ jobs:
 
                   soup = BeautifulSoup(content, 'html.parser')
 
-                  # YONTEM 1: JSON
+                  # JSON Verisi
                   scripts = soup.find_all('script', type='application/ld+json')
                   for script in scripts:
                       try:
@@ -102,14 +94,12 @@ jobs:
                               if isinstance(offers, list): offers = offers[0]
                               if offers.get('price'):
                                   price = float(offers['price'])
-                                  print(f"JSON Fiyat: {price}")
                                   break
                       except:
                           continue
-
-                  # YONTEM 2: CSS (Yedek)
+                  
+                  # Yedek CSS Yontemi
                   if not price:
-                      # Zara'da fiyatin gectigi tum olasi yerler
                       candidates = soup.select("span.money-amount__main, div.product-detail-info__price-amount span")
                       for tag in candidates:
                           txt = tag.get_text().strip()
@@ -118,20 +108,19 @@ jobs:
                               val = float(clean)
                               if val > 100:
                                   price = val
-                                  print(f"CSS Fiyat: {price}")
                                   break
                           except:
                               continue
 
           except Exception as e:
-              print(f"Kod hatasi: {e}")
-              send_telegram(f"HATA: Kod calisirken patladi: {e}")
+              # Kritik hata olursa bildirim at
+              send_telegram(f"⚠️ HATA: Kod calisirken sorun oldu: {str(e)}")
               exit(1)
 
           if not price:
-              print("Fiyat bulunamadi.")
-              send_telegram(f"HATA: Urun sayfasina girildi ama fiyat okunamadi.\nLink: {URL}")
-              # Dosya hatasi vermesin diye bos olustur
+              # Fiyat bulunamazsa bile bildirim at ki kodun calistigini anlayalim
+              send_telegram(f"⚠️ DIKKAT: Urun sayfasina girildi ama fiyat okunamadi. Linki kontrol et.\n{URL}")
+              # Dosya hatasi vermesin
               if not os.path.exists("price.txt"): open("price.txt", "w").write("0")
               exit(0)
 
@@ -140,34 +129,21 @@ jobs:
           
           last_price = "0"
           if os.path.exists("price.txt"): last_price = open("price.txt").read().strip() or "0"
-          
-          # Hata onleyici: last_price bozuksa 0 yap
-          try:
-              float(last_price)
-          except:
-              last_price = "0"
 
-          now = int(time.time())
-          
-          # BILDIRIM MANTIGI
+          # Mesaj Hazirligi
           msg = None
 
-          print(f"Eski: {last_price}, Yeni: {price}")
-
-          if float(last_price) == 0.0:
-              msg = f"✅ TAKİP BAŞLADI\n\nÜrün: {product_name}\nFiyat: {formatted}\n\nLink: {URL}"
+          # Eger eski fiyat 0 ise (dosya silindiyse) VEYA 1990 ise (eski urunse) -> ILK BILDIRIMI AT
+          if float(last_price) == 0.0 or float(last_price) == 1990.0:
+              msg = f"✅ TAKİP YENİDEN BAŞLADI\n\nÜrün: {product_name}\nGüncel Fiyat: {formatted}\n\nLink: {URL}"
           
           elif float(last_price) != price:
-              msg = f"🚨 FİYAT DEĞİŞTİ!\n\nÜrün: {product_name}\nEski: {last_price} TL\nYeni: {formatted}\n\nLink: {URL}"
-
-          # Hatirlatma kontrolunu bu seferlik kaldirdim, sadece degisime odaklanalim.
+              msg = f"🚨 FİYAT DEĞİŞTİ!\n\nEski: {last_price} TL\nYeni: {formatted}\n\nLink: {URL}"
 
           if msg:
-              print("Telegram gonderiliyor...")
               send_telegram(msg)
-          else:
-              print("Fiyat ayni, bildirim yok.")
-
+          
+          # Fiyati kaydet
           with open("price.txt", "w") as f: f.write(str(price))
           PYEND
 
@@ -175,7 +151,7 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          touch price.txt
+          touch price.txt notify.txt
           git add -A
           git diff --staged --quiet || git commit -m "Update price"
           git push
