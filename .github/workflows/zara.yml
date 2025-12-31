@@ -2,7 +2,7 @@ name: Zara Fiyat Takip
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # 30 dakikada bir (Cok sik yapip dikkat cekmeyelim)
+    - cron: '*/30 * * * *' # 30 dakikada bir kontrol
   workflow_dispatch:
 
 permissions:
@@ -50,92 +50,81 @@ jobs:
               except:
                   pass
 
-          print("Firefox tarayicisi hazirlaniyor...")
+          print("Firefox (Gizli Mod) baslatiliyor...")
           price = None
+          product_name = "Zara Ürünü" # Varsayilan isim
 
           try:
               with sync_playwright() as p:
-                  # Chrome yerine FIREFOX kullaniyoruz (Daha az engellenir)
+                  # Firefox, Chrome'a gore daha az engellenir
                   browser = p.firefox.launch(headless=True)
-                  
-                  # Mozilla Firefox User Agent
                   context = browser.new_context(
-                      user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
-                      viewport={"width": 1920, "height": 1080}
+                      user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0"
                   )
-                  
                   page = context.new_page()
                   
-                  # Bot olmadigimizi kanitlamak icin fare hareketleri simulesi (bazen ise yarar)
                   print("Siteye gidiliyor...")
                   page.goto(URL, timeout=90000, wait_until="domcontentloaded")
-                  
-                  # Sayfanin tam yuklenmesi icin rastgele bekle
-                  time.sleep(random.uniform(5, 8))
+                  time.sleep(random.uniform(5, 8)) # Insan taklidi bekleme
                   
                   content = page.content()
                   browser.close()
 
                   soup = BeautifulSoup(content, 'html.parser')
 
-                  # --- YONTEM 1: JSON-LD (Google Verisi) ---
-                  # Bu veri Google icin konulur ve genelde bot korumasina takilmaz.
+                  # --- 1. JSON-LD VERISI (En Garantisi) ---
                   scripts = soup.find_all('script', type='application/ld+json')
                   for script in scripts:
                       try:
                           data = json.loads(script.string)
-                          # Bazen liste olarak doner
-                          if isinstance(data, list):
-                              data = data[0]
+                          if isinstance(data, list): data = data[0]
                           
-                          # Urun semasini bulalim
                           if data.get('@type') == 'Product':
-                              offers = data.get('offers', {})
-                              # Fiyat bazen liste olabilir
-                              if isinstance(offers, list):
-                                  offers = offers[0]
+                              # Ismi cek
+                              if 'name' in data:
+                                  product_name = data['name']
                               
-                              price_val = offers.get('price')
-                              if price_val:
-                                  price = float(price_val)
-                                  print(f"BINGO! JSON verisinden fiyat bulundu: {price}")
+                              # Fiyati cek
+                              offers = data.get('offers', {})
+                              if isinstance(offers, list): offers = offers[0]
+                              
+                              if offers.get('price'):
+                                  price = float(offers['price'])
+                                  print(f"JSON Fiyat: {price}")
                                   break
                       except:
                           continue
-
-                  # --- YONTEM 2: Ozel Regex (Sayfadaki tum sayilari tara) ---
+                  
+                  # --- 2. YEDEK YONTEM (HTML Baslik ve Meta) ---
                   if not price:
+                      # Isim bulma (h1)
+                      h1 = soup.find("h1")
+                      if h1: product_name = h1.get_text().strip()
+
+                      # Regex ile fiyat
                       import re
-                      # "3.590 TL" veya "3590 TL" gibi ifadeleri arar
-                      text_content = soup.get_text()
-                      # Zara formatina ozel regex
-                      matches = re.findall(r'(\d{1,2}(?:\.?\d{3})*,\d{2})\s*(?:TL|TRY)', text_content)
-                      
-                      possible_prices = []
+                      text = soup.get_text()
+                      matches = re.findall(r'(\d{1,3}(?:\.?\d{3})*,\d{2})\s*(?:TL|TRY)', text)
+                      vals = []
                       for m in matches:
                           clean = float(m.replace(".", "").replace(",", "."))
-                          if clean > 100: # 100 TL alti urun olmaz diye varsayiyoruz (yanlis veriyi eler)
-                              possible_prices.append(clean)
-                      
-                      if possible_prices:
-                          # Genelde en yuksek fiyat gercek fiyattir (taksit seceneklerini elemek icin)
-                          price = max(possible_prices)
-                          print(f"Regex ile bulundu: {price}")
+                          if clean > 100: vals.append(clean)
+                      if vals:
+                          price = max(vals) # En yuksek deger genelde asil fiyattir
+                          print(f"Regex Fiyat: {price}")
 
           except Exception as e:
-              send_telegram(f"⚠️ HATA: Kod calisirken patladi:\n{str(e)}")
+              send_telegram(f"⚠️ HATA: Kod çalışırken hata oluştu:\n{str(e)}")
               exit(1)
 
           if not price:
-              # Fiyat bulunamazsa onceki degeri koru ki hata vermesin
-              print("Fiyat bulunamadi, erişim engellenmiş olabilir.")
+              print("Fiyat bulunamadi.")
               if not os.path.exists("price.txt"):
                   with open("price.txt", "w") as f: f.write("0")
-              
-              send_telegram(f"⚠️ Fiyat hala okunamiyor. Zara GitHub IP'lerini engelliyor olabilir. Manuel kontrol ediniz.\n{URL}")
+              send_telegram(f"⚠️ DİKKAT: Ürün sayfasına erişildi ama fiyat okunamadı.\nLink: {URL}")
               exit(0)
 
-          # --- ISLEMLER ---
+          # --- MESAJ FORMATLAMA ---
           formatted = f"{price:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
           
           last_price = "0"
@@ -149,14 +138,39 @@ jobs:
           now = int(time.time())
           msg = None
 
+          # 1. ILK BASLAMA BILDIRIMI
           if last_price == "0":
-              msg = f"✅ BAŞARILI! Takip Başladı (Firefox Modu)\n\n💰 Fiyat: {formatted}\n\n🔗 {URL}"
+              msg = (
+                  f"✅ TAKİP BAŞLADI\n\n"
+                  f"Ürün ismi: {product_name}\n"
+                  f"Başlangıç fiyatı: {formatted}\n\n"
+                  f"🔗 Ürün Linki: {URL}\n\n"
+                  f"ℹ️ Fiyat değişince bildirim alacaksınız."
+              )
           
+          # 2. FIYAT DEGISINCE BILDIRIM
           elif float(last_price) != price:
-              msg = f"🚨 FİYAT DEĞİŞTİ!\n\nEski: {last_price} TL\nYeni: {formatted}\n\n🔗 {URL}"
-          
+              old = float(last_price)
+              old_fmt = f"{old:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
+              diff = price - old
+              emoji = "📉" if diff < 0 else "📈"
+              
+              msg = (
+                  f"{emoji} FİYAT DEĞİŞTİ!\n\n"
+                  f"Ürün ismi: {product_name}\n"
+                  f"Eski Fiyat: {old_fmt}\n"
+                  f"Yeni Fiyat: {formatted}\n\n"
+                  f"🔗 Ürün Linki: {URL}"
+              )
+
+          # 3. 6 SAAT SONRA HATIRLATMA
           elif last_notify and (now - int(last_notify)) >= 21600:
-               msg = f"⏰ Bildirim: Fiyat hala {formatted}\n{URL}"
+              msg = (
+                  f"⏰ HATIRLATMA (6 Saat)\n\n"
+                  f"Ürün ismi: {product_name}\n"
+                  f"Güncel Fiyat: {formatted}\n\n"
+                  f"🔗 Ürün Linki: {URL}"
+              )
 
           if msg:
               send_telegram(msg)
