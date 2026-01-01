@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -48,60 +50,74 @@ jobs:
               url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
               payload = {"chat_id": chat_id, "text": msg}
               try:
-                  requests.post(url, json=payload)
-              except:
-                  pass
+                  resp = requests.post(url, json=payload, timeout=30)
+                  print(f"Telegram response: {resp.status_code}")
+              except Exception as e:
+                  print(f"Telegram error: {e}")
 
           def get_data():
               if os.path.exists("data.json"):
                   try:
-                      return json.load(open("data.json"))
-                  except:
-                      pass
-              return {"price": 0, "first_price": 0, "lowest_price": 0, "highest_price": 0, "check_count": 0, "start_date": ""}
+                      with open("data.json", "r") as f:
+                          data = json.load(f)
+                          print(f"Loaded data: {data}")
+                          return data
+                  except Exception as e:
+                      print(f"JSON read error: {e}")
+              return None
 
           def save_data(data):
               with open("data.json", "w") as f:
-                  json.dump(data, f)
+                  json.dump(data, f, indent=2)
+              print(f"Saved data: {data}")
 
           def format_price(p):
               return f"{p:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
 
           def get_time():
-              return datetime.now().strftime("%d.%m.%Y %H:%M")
+              from datetime import timezone, timedelta
+              tr_tz = timezone(timedelta(hours=3))
+              return datetime.now(tr_tz).strftime("%d.%m.%Y %H:%M")
 
           price = None
-          product_name = "Zara Urunu"
+          product_name = "Zara Ürünü"
 
           try:
               with sync_playwright() as p:
                   browser = p.firefox.launch(headless=True)
                   context = browser.new_context(
-                      user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0"
+                      user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+                      locale="tr-TR"
                   )
                   page = context.new_page()
                   page.goto(URL, timeout=90000, wait_until="domcontentloaded")
-                  time.sleep(random.uniform(5, 8))
+                  time.sleep(random.uniform(6, 10))
                   content = page.content()
                   browser.close()
 
                   soup = BeautifulSoup(content, "html.parser")
 
+                  # JSON-LD'den fiyat al
                   scripts = soup.find_all("script", type="application/ld+json")
                   for script in scripts:
                       try:
                           data = json.loads(script.string)
-                          if isinstance(data, list): data = data[0]
+                          if isinstance(data, list):
+                              data = data[0]
                           if data.get("@type") == "Product":
-                              if "name" in data: product_name = data["name"]
+                              if "name" in data:
+                                  product_name = data["name"]
                               offers = data.get("offers", {})
-                              if isinstance(offers, list): offers = offers[0]
+                              if isinstance(offers, list):
+                                  offers = offers[0]
                               if offers.get("price"):
                                   price = float(offers["price"])
+                                  print(f"JSON-LD'den fiyat: {price}")
                                   break
                       except:
                           continue
                   
+                  # HTML'den fiyat al (yedek)
                   if not price:
                       candidates = soup.select("span.money-amount__main")
                       for tag in candidates:
@@ -111,46 +127,54 @@ jobs:
                               val = float(clean)
                               if val > 100:
                                   price = val
+                                  print(f"HTML'den fiyat: {price}")
                                   break
                           except:
                               continue
 
           except Exception as e:
-              send_telegram(f"HATA: {str(e)[:100]}", PERSONAL_CHAT)
+              error_msg = f"❌ HATA\n\n{str(e)[:200]}\n\n⏰ {get_time()}"
+              send_telegram(error_msg, PERSONAL_CHAT)
               exit(1)
 
           if not price:
-              send_telegram(f"Fiyat alinamadi: {URL}", PERSONAL_CHAT)
+              send_telegram(f"⚠️ Fiyat alınamadı\n\n🔗 {URL}\n\n⏰ {get_time()}", PERSONAL_CHAT)
               exit(0)
+
+          print(f"Güncel fiyat: {price}")
 
           db = get_data()
           now = get_time()
           
-          # ILK CALISTIRMA
-          if db["price"] == 0:
+          # İLK ÇALIŞTIRMA veya SIFIRDAN BAŞLAMA
+          if db is None or db.get("price", 0) == 0:
               msg = f"🛍️ YENİ ÜRÜN TAKİBİ\n"
               msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
               msg += f"📦 {product_name}\n\n"
-              msg += f"💰 Guncel Fiyat: {format_price(price)}\n\n"
+              msg += f"💰 Güncel Fiyat: {format_price(price)}\n\n"
               msg += f"🔗 {URL}\n\n"
               msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-              msg += f"ℹ️ Fiyat degisirse gruba bildirim gelecek\n"
-              msg += f"⏰ 6 saatte bir durum raporu paylasilacak"
+              msg += f"ℹ️ Fiyat değişirse gruba bildirim gelecek\n"
+              msg += f"⏰ 6 saatte bir durum raporu paylaşılacak"
               
               send_telegram(msg, GROUP_CHAT)
-              db["price"] = price
-              db["first_price"] = price
-              db["lowest_price"] = price
-              db["highest_price"] = price
-              db["check_count"] = 0
-              db["start_date"] = now
-              save_data(db)
+              
+              new_db = {
+                  "price": price,
+                  "first_price": price,
+                  "lowest_price": price,
+                  "highest_price": price,
+                  "check_count": 0,
+                  "start_date": now
+              }
+              save_data(new_db)
               exit(0)
 
           old_price = db["price"]
+          print(f"Eski fiyat: {old_price}, Yeni fiyat: {price}")
           
-          # FIYAT DEGISTI
-          if old_price != price:
+          # FİYAT DEĞİŞTİ
+          if abs(old_price - price) > 0.01:  # küçük farkları yoksay
               diff = old_price - price
               percent = (diff / old_price) * 100
               
@@ -165,10 +189,10 @@ jobs:
                   msg += f"📦 {product_name}\n\n"
                   msg += f"💸 Eski Fiyat: {format_price(old_price)}\n"
                   msg += f"💰 Yeni Fiyat: {format_price(price)}\n\n"
-                  msg += f"📉 Dusus: {format_price(abs(diff))} (-%{abs(percent):.1f})\n\n"
+                  msg += f"📉 Düşüş: {format_price(abs(diff))} (-%{abs(percent):.1f})\n\n"
                   msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                  msg += f"📊 Takipteki en dusuk: {format_price(db['lowest_price'])}\n"
-                  msg += f"📊 Takipteki en yuksek: {format_price(db['highest_price'])}\n\n"
+                  msg += f"📊 Takipteki en düşük: {format_price(db['lowest_price'])}\n"
+                  msg += f"📊 Takipteki en yüksek: {format_price(db['highest_price'])}\n\n"
                   msg += f"🔗 {URL}\n\n"
                   msg += f"⏰ {now}"
               else:
@@ -177,10 +201,10 @@ jobs:
                   msg += f"📦 {product_name}\n\n"
                   msg += f"💰 Eski Fiyat: {format_price(old_price)}\n"
                   msg += f"💸 Yeni Fiyat: {format_price(price)}\n\n"
-                  msg += f"📈 Artis: {format_price(abs(diff))} (+%{abs(percent):.1f})\n\n"
+                  msg += f"📈 Artış: {format_price(abs(diff))} (+%{abs(percent):.1f})\n\n"
                   msg += f"━━━━━━━━━━━━━━━━━━━━\n"
-                  msg += f"📊 Takipteki en dusuk: {format_price(db['lowest_price'])}\n"
-                  msg += f"📊 Takipteki en yuksek: {format_price(db['highest_price'])}\n\n"
+                  msg += f"📊 Takipteki en düşük: {format_price(db['lowest_price'])}\n"
+                  msg += f"📊 Takipteki en yüksek: {format_price(db['highest_price'])}\n\n"
                   msg += f"🔗 {URL}\n\n"
                   msg += f"⏰ {now}"
               
@@ -190,7 +214,7 @@ jobs:
               save_data(db)
               exit(0)
 
-          # FIYAT AYNI - SAYACI ARTIR
+          # FİYAT AYNI - SAYACI ARTIR
           db["check_count"] = db.get("check_count", 0) + 1
           print(f"Check count: {db['check_count']}/24")
 
@@ -202,35 +226,49 @@ jobs:
               msg = f"⏰ 6 SAATLİK RAPOR\n"
               msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
               msg += f"📦 {product_name}\n\n"
-              msg += f"💰 Guncel Fiyat: {format_price(price)}\n\n"
+              msg += f"💰 Güncel Fiyat: {format_price(price)}\n\n"
               
-              if total_diff > 0:
-                  msg += f"📉 Baslangictan bu yana: {format_price(abs(total_diff))} dusus\n"
-              elif total_diff < 0:
-                  msg += f"📈 Baslangictan bu yana: {format_price(abs(total_diff))} artis\n"
+              if total_diff > 0.01:
+                  msg += f"📉 Başlangıçtan bu yana: {format_price(abs(total_diff))} düşüş\n"
+              elif total_diff < -0.01:
+                  msg += f"📈 Başlangıçtan bu yana: {format_price(abs(total_diff))} artış\n"
               else:
-                  msg += f"➖ Baslangictan bu yana fiyat degismedi\n"
+                  msg += f"➖ Başlangıçtan bu yana fiyat değişmedi\n"
               
               msg += f"\n━━━━━━━━━━━━━━━━━━━━\n"
-              msg += f"📊 En dusuk: {format_price(db['lowest_price'])}\n"
-              msg += f"📊 En yuksek: {format_price(db['highest_price'])}\n"
-              msg += f"📅 Takip baslangici: {db.get('start_date', '-')}\n\n"
+              msg += f"📊 En düşük: {format_price(db['lowest_price'])}\n"
+              msg += f"📊 En yüksek: {format_price(db['highest_price'])}\n"
+              msg += f"📅 Takip başlangıcı: {db.get('start_date', '-')}\n\n"
               msg += f"🔗 {URL}\n\n"
               msg += f"✅ Takip aktif"
               
               send_telegram(msg, GROUP_CHAT)
               db["check_count"] = 0
 
-          # HER ZAMAN KAYDET
           save_data(db)
           PYEND
 
-      - name: Commit files
+      - name: Commit and push
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git pull --rebase || true
-          touch data.json
-          git add -A
-          git diff --staged --quiet || git commit -m "Update"
-          git push || (git pull --rebase && git push)
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # data.json'ı kontrol et
+          if [ -f "data.json" ]; then
+            cat data.json
+          fi
+          
+          # Değişiklik varsa commit et
+          git add data.json
+          if ! git diff --staged --quiet; then
+            git commit -m "Update price data [skip ci]"
+            
+            # Push et, conflict varsa tekrar dene
+            for i in 1 2 3; do
+              git push && break
+              echo "Push failed, retrying..."
+              git pull --rebase
+            done
+          else
+            echo "No changes to commit"
+          fi
