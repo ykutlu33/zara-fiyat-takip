@@ -126,6 +126,7 @@ jobs:
           db = get_data()
           now = get_time()
           
+          # ILK CALISTIRMA
           if db["price"] == 0:
               msg = f"🛍️ YENİ ÜRÜN TAKİBİ\n"
               msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -141,13 +142,14 @@ jobs:
               db["first_price"] = price
               db["lowest_price"] = price
               db["highest_price"] = price
-              db["check_count"] = 1
+              db["check_count"] = 0
               db["start_date"] = now
               save_data(db)
               exit(0)
 
           old_price = db["price"]
           
+          # FIYAT DEGISTI
           if old_price != price:
               diff = old_price - price
               percent = (diff / old_price) * 100
@@ -188,7 +190,11 @@ jobs:
               save_data(db)
               exit(0)
 
-          db["check_count"] += 1
+          # FIYAT AYNI - SAYACI ARTIR
+          db["check_count"] = db.get("check_count", 0) + 1
+          print(f"Check count: {db['check_count']}/24")
+
+          # 6 SAAT RAPOR (24 x 15dk = 6 saat)
           if db["check_count"] >= 24:
               first_p = db.get("first_price", price)
               total_diff = first_p - price
@@ -214,7 +220,8 @@ jobs:
               
               send_telegram(msg, GROUP_CHAT)
               db["check_count"] = 0
-          
+
+          # HER ZAMAN KAYDET
           save_data(db)
           PYEND
 
